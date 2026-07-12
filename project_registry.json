@@ -1,0 +1,236 @@
+{
+  "blocked_tokens": [
+    "cum",
+    "ngl",
+    "ass",
+    "boobs",
+    "boots",
+    "braless",
+    "canadian",
+    "cosplay",
+    "corsets",
+    "facial",
+    "games",
+    "gingers",
+    "goth",
+    "innocent",
+    "kinky",
+    "lingerie",
+    "nipples",
+    "panties",
+    "perky",
+    "petite",
+    "redheads",
+    "saggy",
+    "selfie",
+    "selfies",
+    "sex",
+    "sexy",
+    "stockings",
+    "thick",
+    "tittyfuck",
+    "upskirt",
+    "videos",
+    "wet"
+  ],
+  "preferred_alias_targets": {
+    "imsadspice": "extrasadspice",
+    "stoya": "atoyadoll"
+  },
+  "entries": [
+    {
+      "family": "reddit_follow",
+      "canonical": "bailey_spinn",
+      "aliases": ["Bailey Spinn", "bailey spinn", "baileyspinn", "bailey_spinn"],
+      "notes": "Project-local identity for Bailey Spinn."
+    },
+    {
+      "family": "pscrape",
+      "canonical": "hailstorm93",
+      "aliases": ["ahhhey", "AhhHey", "hailstorm93"],
+      "notes": "Project-local alias overlay; ahhhey is an alias of hailstorm93."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "brookemonkthesecond",
+      "aliases": ["BrookeMonkTheSecond", "brooke monk the second", "brooke monk", "brooke monk second"],
+      "notes": "Project-local alias overlay for Brooke Monk variant names."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "pennypax",
+      "aliases": ["PennyPax", "penny pax"],
+      "notes": "Project-local alias overlay for Penny Pax variants."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "camilamendes",
+      "aliases": ["CamilaMendes", "Camila Mendes", "camila mendes"],
+      "notes": "Project-local alias overlay for Camila Mendes variants."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "laurenphillips",
+      "aliases": ["LaurenPhillips", "Lauren Phillips", "lauren phillips"],
+      "notes": "Project-local alias overlay for Lauren Phillips variants."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "jia_lissa",
+      "aliases": ["Jia_Lissa", "Jia Lissa", "jia lissa"],
+      "notes": "Project-local alias overlay for Jia Lissa variants."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "emma_wallbank",
+      "aliases": ["Emma Wallbank", "Emma wallbank", "emma wallbank", "Em Wallbank", "em wallbank"],
+      "notes": "Project-local alias overlay for Emma Wallbank variants."
+    },
+    {
+      "family": "reddit_subreddit",
+      "canonical": "alexisbledel",
+      "aliases": ["Alexis Bledel", "alexis bledel"],
+      "notes": "Project-local alias overlay for Alexis Bledel."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "rachel_zegler",
+      "aliases": ["Rachel Zegler", "rachel zegler"],
+      "notes": "Project-local alias overlay for Rachel Zegler."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "julia_kelly",
+      "aliases": ["Julia Kelly", "julia kelly"],
+      "notes": "Project-local alias overlay for Julia Kelly."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "megan_mahoney",
+      "aliases": ["Megan Mahoney", "megan mahoney"],
+      "notes": "Project-local alias overlay for Megan Mahoney."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "aidrafoxnew",
+      "aliases": ["AidraFoxNew", "aidrafoxnew", "Aidra Fox New", "aidra fox new"],
+      "notes": "Project-local alias overlay for AidraFoxNew."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "emilydeytaysage",
+      "aliases": ["EmilyDeytAysage", "emilydeytaysage"],
+      "notes": "Project-local alias overlay for EmilyDeytAysage."
+    },
+    {
+      "family": "pscrape",
+      "canonical": "darlacrane",
+      "aliases": ["Darla Crane", "darla crane"],
+      "notes": "Project-local alias overlay for Darla Crane."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "payton_n",
+      "aliases": ["Payton.n", "payton.n", "Payton N", "payton n"],
+      "notes": "Project-local alias overlay for Payton.n."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "callmesloo",
+      "aliases": ["callmesloo", "CallMeSloo", "Call Me Sloo", "call me sloo"],
+      "notes": "Project-local alias overlay for callmesloo."
+    },
+    {
+      "family": "reddit_subreddit",
+      "canonical": "juliafilippo",
+      "aliases": ["Julia Filippo", "julia filippo"],
+      "notes": "Project-local alias overlay for Julia Filippo."
+    },
+    {
+      "family": "reddit_subreddit",
+      "canonical": "karengillan",
+      "aliases": ["Karen Gillan", "karen gillan"],
+      "notes": "Project-local alias overlay for Karen Gillan."
+    },
+    {
+      "family": "imdb",
+      "canonical": "atoyadoll",
+      "aliases": ["stoya", "Stoya"],
+      "notes": "Project-local alias overlay; stoya is treated as atoyadoll for this corpus."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "stella_violet",
+      "aliases": ["Stella Violet", "stella violet"],
+      "notes": "Project-local alias overlay for Stella Violet."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "emmamagnoliafans",
+      "aliases": ["EmmaMagnoliaFans", "emma magnolia fans", "Emma Magnolia Fans"],
+      "notes": "Project-local alias overlay for EmmaMagnoliaFans."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "billieeilish",
+      "aliases": ["Billie Eilish", "billie eilish"],
+      "notes": "Project-local alias overlay for Billie Eilish spaced-title matches."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "claragalle",
+      "aliases": ["Clara Galle", "clara galle"],
+      "notes": "Project-local alias overlay for Clara Galle."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "larsenthompson",
+      "aliases": ["Larsen Thompson", "larsen thompson"],
+      "notes": "Project-local alias overlay for Larsen Thompson."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "natashalyonne",
+      "aliases": ["Natasha Lyonne", "natasha lyonne"],
+      "notes": "Project-local alias overlay for Natasha Lyonne."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "octaviared",
+      "aliases": ["Octavia Red", "octavia red"],
+      "notes": "Project-local alias overlay for Octavia Red."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "simonesteele",
+      "aliases": ["Simone Steele", "simone steele"],
+      "notes": "Project-local alias overlay for Simone Steele."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "brandyrenee",
+      "aliases": ["Brandy Renee", "brandy renee"],
+      "notes": "Project-local alias overlay for Brandy Renee."
+    },
+    {
+      "family": "reddit_follow",
+      "canonical": "ellahughesr",
+      "aliases": ["Ellahughesr", "Ella Hughes R", "ella hughes r"],
+      "notes": "Project-local alias overlay for Ellahughesr."
+    },
+    {
+      "family": "reddit_subreddit",
+      "canonical": "monalitaxo",
+      "aliases": [
+        "Monalita",
+        "monalita",
+        "MonalitaDreams",
+        "monalitadreams",
+        "Mona Hguylen",
+        "mona hguylen",
+        "mona_hguylen"
+      ],
+      "notes": "Project-local alias overlay; Monalita folds into Monalitaxo/Mona Hguylen."
+    }
+  ]
+}
