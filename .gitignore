@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+.rtt-cache/
+.rtt/
+docs/agent-workbench/
+*.pyc
+*.pyo
+*.jsonl
+*.202*
+
+# Local runtime outputs
+/tmp/
+*.audit.json
