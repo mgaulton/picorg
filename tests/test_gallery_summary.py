@@ -236,3 +236,21 @@ def test_short_profile_alias_does_not_override_caption_identity(tmp_path, monkey
     assert matched is None
     assert confidence == 0.0
     assert rule == "unmatched"
+
+
+def test_short_manual_alias_matches_exact_gallery_title(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "mixedpics"
+    path = root / "Jameliz (1).jpg"
+    identity = ps.Identity("jameliz", "manual", ())
+    alias_index = {ps.normalize_key("jameliz"): {identity}}
+    token_index = {"jameliz": {identity}}
+    monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", set())
+    ps.build_identity_scoring_cache([identity])
+
+    matched, confidence, rule = best_identity_match(
+        path, root, [identity], alias_index, token_index
+    )
+
+    assert matched == identity
+    assert confidence == 1.0
+    assert rule == "exact:jameliz"

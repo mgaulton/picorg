@@ -43,7 +43,7 @@ DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
 DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
-DEFAULT_RESOLVER_VERSION = "2026-07-31.12"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.13"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -1189,7 +1189,12 @@ def best_identity_match(
     for piece in normalized_pieces:
         exact_key = normalize_key(piece)
         exact_hits = alias_index.get(exact_key, set())
-        if exact_key in PROJECT_AMBIGUOUS_TOKENS or len(exact_key) < 10:
+        exact_gallery_key = normalize_key(gallery_base_title(title_from_path(path)))
+        exact_manual_gallery_hit = (
+            exact_key == exact_gallery_key
+            and any(identity.family == "manual" for identity in exact_hits)
+        )
+        if exact_key in PROJECT_AMBIGUOUS_TOKENS or (len(exact_key) < 10 and not exact_manual_gallery_hit):
             continue
         if exact_key in PROJECT_BLOCKED_TOKENS and not exact_hits:
             continue
