@@ -10,16 +10,21 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import tempfile
+import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, g, jsonify, request, send_file
 
 import picorg_sorter as sorter
+
+LOGGER = logging.getLogger(__name__)
 
 
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
@@ -223,10 +228,46 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
     allowed_roots = {Path(path).resolve() for cluster in clusters for path in cluster["source_roots"] if path}
 
     app = Flask(__name__)
+    app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+    write_lock = threading.RLock()
+
+    @app.before_request
+    def request_context() -> None:
+        g.request_id = request.headers.get("X-Request-ID", "")[:80] or uuid.uuid4().hex
+
+    @app.after_request
+    def response_headers(response):
+        response.headers["X-Request-ID"] = g.request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+        if request.path.startswith("/api/") or request.path == "/media":
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.errorhandler(413)
+    def request_too_large(_error):
+        return jsonify({"error": "request body is too large", "request_id": g.request_id}), 413
+
+    @app.errorhandler(Exception)
+    def handle_unexpected(error):
+        LOGGER.exception("request failed request_id=%s path=%s", g.request_id, request.path, exc_info=error)
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "internal server error", "request_id": g.request_id}), 500
+        return "The review UI encountered an internal error.", 500
 
     @app.get("/")
     def index():
         return HTML_PAGE
+
+    @app.get("/healthz")
+    def healthz():
+        return jsonify({"status": "ok", "request_id": g.request_id})
+
+    @app.get("/readyz")
+    def readyz():
+        ready = bool(clusters) and audit_path.is_file()
+        return jsonify({"status": "ready" if ready else "not_ready", "clusters": len(clusters), "request_id": g.request_id}), 200 if ready else 503
 
     @app.get("/api/summary")
     def summary():
@@ -283,8 +324,9 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
         else:
             removed.add(path)
             moves.pop(path, None)
-        _atomic_json_write(overrides_path, {"schema_version": 1, "updated": datetime.now(timezone.utc).isoformat(), "moves": moves, "removed": sorted(removed)})
-        _apply_overrides(clusters, {"moves": moves, "removed": removed})
+        with write_lock:
+            _atomic_json_write(overrides_path, {"schema_version": 1, "updated": datetime.now(timezone.utc).isoformat(), "moves": moves, "removed": sorted(removed)})
+            _apply_overrides(clusters, {"moves": moves, "removed": removed})
         return jsonify({"saved": True, "path": path, "action": action, "cluster": _public_cluster(by_id[cluster_id], decisions.get(cluster_id))}), 201
 
     @app.get("/api/identities")
@@ -301,8 +343,9 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
     def delete_decision(cluster_id: str):
         if cluster_id not in decisions:
             return jsonify({"error": "decision not found"}), 404
-        del decisions[cluster_id]
-        _write_decisions(decisions_path, decisions)
+        with write_lock:
+            del decisions[cluster_id]
+            _write_decisions(decisions_path, decisions)
         return jsonify({"deleted": cluster_id})
 
     @app.get("/api/export-preview")
@@ -337,8 +380,9 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
             "count": by_id[cluster_id]["count"],
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
-        decisions[cluster_id] = decision
-        _write_decisions(decisions_path, decisions)
+        with write_lock:
+            decisions[cluster_id] = decision
+            _write_decisions(decisions_path, decisions)
         return jsonify(decision), 201
 
     @app.post("/api/decisions/bulk")
@@ -365,7 +409,8 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
                 "count": by_id[cluster_id]["count"],
                 "saved_at": datetime.now(timezone.utc).isoformat(),
             }
-        _write_decisions(decisions_path, decisions)
+        with write_lock:
+            _write_decisions(decisions_path, decisions)
         return jsonify({"saved": len(cluster_ids), "cluster_ids": cluster_ids}), 201
 
     @app.get("/media")
@@ -384,8 +429,8 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
 HTML_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Picorg candidate review</title>
 <style>
-body{font:14px system-ui;margin:0;color:#202124;background:#f6f7f9}main{display:grid;grid-template-columns:330px 1fr;min-height:100vh}.side{background:#20252b;color:#f5f7fa;padding:18px;overflow:auto}.side h1{font-size:20px}.cluster{display:block;width:100%;text-align:left;background:#2d343c;color:inherit;border:1px solid #46505a;border-radius:6px;padding:10px;margin:7px 0;cursor:pointer}.cluster.active{border-color:#7cc4ff}.cluster small{display:block;color:#b7c0ca;margin-top:3px}.detail{padding:24px;max-width:1100px}.meta{background:white;padding:12px;border-radius:8px;margin-bottom:16px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.grid img{width:100%;height:160px;object-fit:cover;background:#ddd;border-radius:6px}.form{background:white;padding:16px;border-radius:8px;margin-top:16px;display:grid;gap:9px;max-width:650px}input,select,textarea,button{font:inherit;padding:8px}button{cursor:pointer}.status{min-height:22px;color:#176b37}.muted{color:#68737d}
-</style></head><body><main><aside class="side"><h1>Candidate clusters</h1><div id="summary" class="muted">Loading…</div><input id="filter" placeholder="Filter clusters" oninput="loadPage(true)"><div id="list"></div><div><button onclick="loadPage(false)">Next page</button></div></aside><section class="detail"><div id="detail"><h2>Select a cluster</h2><p class="muted">Review the images, then record an explicit identity decision.</p></div></section></main>
+body{font:14px system-ui;margin:0;color:#202124;background:#f6f7f9}main{display:grid;grid-template-columns:330px 1fr;min-height:100vh}.side{background:#20252b;color:#f5f7fa;padding:18px;overflow:auto}.side h1{font-size:20px}.cluster{display:block;width:100%;text-align:left;background:#2d343c;color:inherit;border:1px solid #46505a;border-radius:6px;padding:10px;margin:7px 0;cursor:pointer}.cluster.active{border-color:#7cc4ff}.cluster small{display:block;color:#b7c0ca;margin-top:3px}.detail{padding:24px;max-width:1100px}.meta{background:white;padding:12px;border-radius:8px;margin-bottom:16px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.grid img{width:100%;height:160px;object-fit:cover;background:#ddd;border-radius:6px}.form{background:white;padding:16px;border-radius:8px;margin-top:16px;display:grid;gap:9px;max-width:650px}input,select,textarea,button{font:inherit;padding:8px}button{cursor:pointer}button:disabled{cursor:wait;opacity:.6}:focus-visible{outline:3px solid #7cc4ff;outline-offset:2px}.status{min-height:22px;color:#176b37}.muted{color:#68737d}@media(max-width:700px){main{display:block}.side{position:static}.detail{padding:14px}.grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}.grid img{height:120px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+</style></head><body><main><aside class="side"><h1>Candidate clusters</h1><div id="summary" class="muted" aria-live="polite">Loading…</div><label for="filter">Search clusters</label><input id="filter" placeholder="Filter clusters" oninput="loadPage(true)"><div id="list" aria-live="polite"></div><div><button id="nextPage" type="button" onclick="loadPage(false)">Next page</button></div></aside><section class="detail" aria-live="polite"><div id="detail"><h2>Select a cluster</h2><p class="muted">Review the images, then record an explicit identity decision.</p></div></section></main>
 <script>
 let clusters=[], selected=null;
 let page=1, hasNext=false;
@@ -401,6 +446,10 @@ statusObserver.observe(document.querySelector('#detail'),{childList:true});
 const memberObserver=new MutationObserver(()=>{let grid=document.querySelector('#detail .grid');if(!grid||document.querySelector('#memberTools'))return;let tools=document.createElement('div');tools.id='memberTools';tools.className='meta';tools.innerHTML='<b>Cluster membership</b><br><select id="targetCluster">'+clusters.map(c=>'<option value="'+c.cluster_id+'">'+esc(c.title)+' ('+c.count+')</option>').join('')+'</select><button onclick="updateMember(\'add\')">Move selected image</button><button onclick="updateMember(\'remove\')">Remove selected image</button><p class="muted">Click an image first, then use these controls.</p>';document.querySelector('#detail').insertBefore(tools,grid);grid.querySelectorAll('a').forEach(a=>a.onclick=()=>{window.memberPath=new URL(a.href).searchParams.get('path');document.querySelector('#memberTools p').textContent='Selected: '+window.memberPath});});
 memberObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
 async function updateMember(action){if(!window.memberPath){alert('Select an image first');return}let body={path:window.memberPath,action};if(action==='add')body.target_cluster_id=document.querySelector('#targetCluster').value||selected;let r=await fetch('/api/clusters/'+selected+'/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=await r.json();if(!r.ok){alert(d.error||'Membership update failed');return}select(selected)}
+let loadGeneration=0;
+async function loadPage(reset){let generation=++loadGeneration;if(reset){page=1;clusters=[];document.querySelector('#list').textContent='Loading…'}let q=encodeURIComponent(document.querySelector('#filter').value);try{let r=await fetch(`/api/clusters?page=${page}&page_size=50&q=${q}`,{headers:{Accept:'application/json'}});let c=await r.json();if(!r.ok)throw new Error(c.error||`Request failed (${r.status})`);if(generation!==loadGeneration)return;clusters=reset?c.clusters:clusters.concat(c.clusters);hasNext=c.has_next;document.querySelector('#summary').textContent=`${c.total} matching clusters · loaded ${clusters.length}`;let next=document.querySelector('#nextPage');next.disabled=!hasNext;next.textContent=hasNext?'Next page':'No more pages';renderList();if(reset&&clusters[0]){select(clusters[0].cluster_id);page=2}else if(!reset&&hasNext)page++}catch(error){if(generation!==loadGeneration)return;document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)} <button type="button" onclick="loadPage(${reset})">Retry</button></p>`}}
+async function init(){try{let r=await fetch('/api/summary',{headers:{Accept:'application/json'}});let a=await r.json();if(!r.ok)throw new Error(a.error||`Request failed (${r.status})`);document.querySelector('#summary').textContent=`${a.clusters} clusters · ${a.decisions} saved decisions`;await loadPage(true)}catch(error){document.querySelector('#summary').innerHTML=`<span role="alert">${esc(error.message)}</span>`;document.querySelector('#list').innerHTML='<button type="button" onclick="init()">Retry loading</button>'}}
+window.addEventListener('unhandledrejection',event=>{let detail=document.querySelector('#detail');if(detail)detail.innerHTML=`<p role="alert">${esc(event.reason?.message||'The request failed.')} <button type="button" onclick="select(selected)">Retry</button></p>`});
 </script></body></html>"""
 
 

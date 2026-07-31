@@ -34,6 +34,11 @@ def test_decision_is_saved_and_media_is_allowlisted(tmp_path):
     (tmp_path / "A (1).jpg").write_bytes(b"not-an-image")
     decisions = tmp_path / "decisions.json"
     client = review_ui.create_app(audit, decisions).test_client()
+    health = client.get("/healthz")
+    assert health.status_code == 200
+    assert health.headers["X-Content-Type-Options"] == "nosniff"
+    summary = client.get("/api/summary").get_json()
+    assert "gallery_sets" not in summary["report"]
     cluster = client.get("/api/clusters").get_json()["clusters"][0]
     response = client.post(
         "/api/decisions",
@@ -51,6 +56,8 @@ def test_decision_is_saved_and_media_is_allowlisted(tmp_path):
     )
     assert bulk.status_code == 201
     assert json.loads(decisions.read_text())["decisions"][0]["status"] == "confirmed"
+    oversized = client.post("/api/decisions", data="x" * 70000, content_type="application/json")
+    assert oversized.status_code == 413
 
 
 def test_export_promotes_confirmed_only(tmp_path):

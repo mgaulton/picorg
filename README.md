@@ -155,6 +155,11 @@ The service has no login layer, so keep port 8787 restricted to a trusted LAN or
 run with `--host 127.0.0.1` for local-only access. Do not expose it directly to
 the internet.
 
+Operational probes are available at `/healthz` and `/readyz`. API responses are
+bounded, carry an `X-Request-ID`, disable caching, and reject request bodies
+larger than 64 KiB. The UI includes retry feedback, accessible live regions,
+keyboard focus states, responsive layout behavior, and reduced-motion support.
+
 Decisions support `pending`, `needs-evidence`, `confirmed`, and `rejected`.
 Only confirmed decisions can be promoted explicitly:
 
