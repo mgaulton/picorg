@@ -41,5 +41,34 @@ def test_decision_is_saved_and_media_is_allowlisted(tmp_path):
     )
     assert response.status_code == 201
     assert json.loads(decisions.read_text())["decisions"][0]["identity"] == "creator_a"
+    assert json.loads(decisions.read_text())["decisions"][0]["status"] == "pending"
     assert client.get("/media", query_string={"path": str(tmp_path / "A (1).jpg")}).status_code == 200
     assert client.get("/media", query_string={"path": "/etc/passwd"}).status_code == 403
+
+    bulk = client.post(
+        "/api/decisions/bulk",
+        json={"cluster_ids": [cluster["cluster_id"]], "identity": "creator_a", "family": "manual", "status": "confirmed"},
+    )
+    assert bulk.status_code == 201
+    assert json.loads(decisions.read_text())["decisions"][0]["status"] == "confirmed"
+
+
+def test_export_promotes_confirmed_only(tmp_path):
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(
+        json.dumps(
+            {
+                "decisions": [
+                    {"cluster_id": "confirmed", "identity": "creator_a", "family": "manual", "status": "confirmed", "aliases": ["Creator A"], "notes": "two sources"},
+                    {"cluster_id": "pending", "identity": "creator_b", "family": "manual", "status": "pending", "aliases": ["Creator B"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert review_ui.export_confirmed_decisions(decisions, registry) == 1
+    entries = json.loads(registry.read_text())["entries"]
+    assert [item["canonical"] for item in entries] == ["creator_a"]

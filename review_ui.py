@@ -26,6 +26,8 @@ DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_DECISIONS = Path("/opt/picorg/review_decisions.json")
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".mov"}
 FAMILIES = {"manual", "metadaily", "reddit_follow", "reddit_subreddit", "pscrape", "review"}
+DECISION_STATUSES = {"pending", "confirmed", "rejected", "needs-evidence"}
+DEFAULT_REGISTRY = Path("/opt/picorg/project_registry.json")
 
 
 def latest_audit(audit_root: Path = DEFAULT_AUDIT_ROOT) -> Path:
@@ -107,6 +109,45 @@ def _write_decisions(path: Path, decisions: Dict[str, Dict[str, Any]]) -> None:
             os.unlink(temp_name)
 
 
+def export_confirmed_decisions(decisions_path: Path, registry_path: Path = DEFAULT_REGISTRY) -> int:
+    """Promote only confirmed UI decisions into the project registry."""
+    decisions = _read_decisions(decisions_path)
+    payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    entries = payload.setdefault("entries", [])
+    existing = {(str(item.get("family")), sorter.normalize_key(str(item.get("canonical")))): item
+                for item in entries if isinstance(item, dict)}
+    promoted = 0
+    for decision in decisions.values():
+        if decision.get("status") != "confirmed":
+            continue
+        canonical = str(decision.get("identity") or "").strip()
+        family = str(decision.get("family") or "review").strip()
+        if not canonical or family not in FAMILIES:
+            continue
+        aliases = [str(alias).strip() for alias in decision.get("aliases", []) if str(alias).strip()]
+        key = (family, sorter.normalize_key(canonical))
+        entry = existing.get(key)
+        if entry is None:
+            entry = {"family": family, "canonical": canonical, "aliases": [], "notes": ""}
+            entries.append(entry)
+            existing[key] = entry
+        entry["aliases"] = sorted(set(entry.get("aliases", [])) | set(aliases))
+        note = str(decision.get("notes") or "").strip()
+        if note and note not in str(entry.get("notes") or ""):
+            entry["notes"] = (str(entry.get("notes") or "").rstrip() + " [review-ui] " + note).strip()
+        promoted += 1
+    fd, temp_name = tempfile.mkstemp(prefix=f".{registry_path.name}.", dir=str(registry_path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temp_name, registry_path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+    return promoted
+
+
 def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS) -> Flask:
     payload = load_audit(audit_path)
     clusters = build_clusters(payload)
@@ -160,10 +201,14 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS) -> Fl
             return jsonify({"error": "identity is required and must be one line"}), 400
         if family not in FAMILIES:
             return jsonify({"error": "invalid family"}), 400
+        status = str(body.get("status") or "pending").strip()
+        if status not in DECISION_STATUSES:
+            return jsonify({"error": "invalid decision status"}), 400
         decision = {
             "cluster_id": cluster_id,
             "identity": identity,
             "family": family,
+            "status": status,
             "aliases": [str(alias).strip() for alias in body.get("aliases", []) if str(alias).strip()][:20],
             "notes": str(body.get("notes") or "").strip()[:1000],
             "sample_paths": by_id[cluster_id]["sample_paths"],
@@ -173,6 +218,33 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS) -> Fl
         decisions[cluster_id] = decision
         _write_decisions(decisions_path, decisions)
         return jsonify(decision), 201
+
+    @app.post("/api/decisions/bulk")
+    def save_bulk_decisions():
+        body = request.get_json(silent=True) or {}
+        cluster_ids = [str(item) for item in body.get("cluster_ids", [])]
+        unknown = [item for item in cluster_ids if item not in by_id]
+        if unknown or not cluster_ids:
+            return jsonify({"error": "cluster_ids must identify existing clusters"}), 400
+        identity = str(body.get("identity") or "").strip()
+        family = str(body.get("family") or "review").strip()
+        status = str(body.get("status") or "pending").strip()
+        if not identity or family not in FAMILIES or status not in DECISION_STATUSES:
+            return jsonify({"error": "identity, family, or status is invalid"}), 400
+        for cluster_id in cluster_ids:
+            decisions[cluster_id] = {
+                "cluster_id": cluster_id,
+                "identity": identity,
+                "family": family,
+                "status": status,
+                "aliases": [],
+                "notes": str(body.get("notes") or "").strip()[:1000],
+                "sample_paths": by_id[cluster_id]["sample_paths"],
+                "count": by_id[cluster_id]["count"],
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+        _write_decisions(decisions_path, decisions)
+        return jsonify({"saved": len(cluster_ids), "cluster_ids": cluster_ids}), 201
 
     @app.get("/media")
     def media():
@@ -199,6 +271,9 @@ function renderList(){let q=document.querySelector('#filter').value.toLowerCase(
 async function select(id){selected=id;renderList();let x=await fetch('/api/clusters/'+id).then(r=>r.json());let images=x.sample_paths.map(p=>`<a href="/media?path=${encodeURIComponent(p)}" target="_blank"><img src="/media?path=${encodeURIComponent(p)}" loading="lazy" title="${esc(p)}"></a>`).join('');document.querySelector('#detail').innerHTML=`<h2>${esc(x.title)}</h2><div class="meta"><b>${x.count} files</b><br>Expected labels: ${esc(x.expected_identities.join(', ')||'none')}<br>Sources: ${esc(x.source_roots.join(', '))}</div><div class="grid">${images}</div><form class="form" onsubmit="save(event)"><label>Identity <input id="identity" required value="${esc(x.decision?.identity||'')}" placeholder="canonical identity"></label><label>Family <select id="family">${['manual','metadaily','reddit_follow','reddit_subreddit','pscrape','review'].map(f=>`<option ${x.decision?.family===f?'selected':''}>${f}</option>`).join('')}</select></label><label>Aliases, one per line<textarea id="aliases" placeholder="optional aliases">${esc((x.decision?.aliases||[]).join('\n'))}</textarea></label><label>Evidence / notes<textarea id="notes" placeholder="Why this assignment is supported">${esc(x.decision?.notes||'')}</textarea></label><button>Save explicit decision</button><div class="status" id="status"></div></form>`}
 async function save(e){e.preventDefault();let r=await fetch('/api/decisions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cluster_id:selected,identity:identity.value,family:family.value,aliases:aliases.value.split('\n'),notes:notes.value})});let d=await r.json();status.textContent=r.ok?'Saved decision for '+d.count+' files':d.error;if(r.ok){let x=clusters.find(x=>x.cluster_id===selected);x.decision=d;renderList()}}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}init();
+async function save(e){e.preventDefault();let r=await fetch('/api/decisions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cluster_id:selected,identity:identity.value,family:family.value,status:(document.querySelector('#decisionStatus')||{value:'pending'}).value,aliases:aliases.value.split('\\n'),notes:notes.value})});let d=await r.json();status.textContent=r.ok?'Saved decision for '+d.count+' files':d.error;if(r.ok){let x=clusters.find(x=>x.cluster_id===selected);x.decision=d;renderList()}}
+const statusObserver=new MutationObserver(()=>{let form=document.querySelector('.form');if(form&&!document.querySelector('#decisionStatus')){let label=document.createElement('label');label.textContent='Status ';let select=document.createElement('select');select.id='decisionStatus';['pending','needs-evidence','confirmed','rejected'].forEach(v=>{let option=document.createElement('option');option.value=v;option.textContent=v;select.appendChild(option)});label.appendChild(select);form.insertBefore(label,form.children[1])}});
+statusObserver.observe(document.querySelector('#detail'),{childList:true});
 </script></body></html>"""
 
 
@@ -206,9 +281,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audit", type=Path, help="audit JSON; defaults to newest file in /tmp/picorg_sorted_audit")
     parser.add_argument("--decisions", type=Path, default=DEFAULT_DECISIONS)
+    parser.add_argument("--export-registry", action="store_true", help="promote confirmed decisions into the registry")
+    parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
+    if args.export_registry:
+        print(f"promoted {export_confirmed_decisions(args.decisions, args.registry)} confirmed decisions")
+        return 0
     audit_path = args.audit or latest_audit()
     create_app(audit_path, args.decisions).run(host=args.host, port=args.port, debug=False)
     return 0
