@@ -353,6 +353,24 @@ def test_short_manual_alias_survives_scoring_for_exact_gallery_title(tmp_path, m
     assert rule == "exact:jameliz"
 
 
+def test_short_manual_identity_matches_date_prefixed_filename(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "mixedpics"
+    path = root / "Jameliz (1)_20250112_141045_jznkh2.jpg"
+    identity = ps.Identity("jameliz", "manual", ())
+    alias_index = {ps.normalize_key("jameliz"): {identity}}
+    token_index = {"jameliz": {identity}}
+    monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", set())
+    ps.build_identity_scoring_cache([identity])
+
+    matched, confidence, rule = best_identity_match(
+        path, root, [identity], alias_index, token_index
+    )
+
+    assert matched == identity
+    assert confidence == 0.97
+    assert rule == "date-prefix+lead-token"
+
+
 def test_profile_image_hash_match_is_high_confidence_but_not_apply_confidence(tmp_path) -> None:
     root = tmp_path / "mixedpics"
     root.mkdir()

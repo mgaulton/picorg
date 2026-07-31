@@ -43,7 +43,7 @@ DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
 DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
-DEFAULT_RESOLVER_VERSION = "2026-07-31.23"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.24"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -1331,9 +1331,13 @@ def best_identity_match(
                 canon_key == exact_gallery_key
                 or any(alias_key == exact_gallery_key for _, alias_key in alias_pairs)
             )
+            manual_date_prefix_match = identity.family == "manual" and len(canon_key) >= 7 and (
+                bool(stem_tokens) and normalize_key(stem_tokens[0]) == canon_key
+                or len(stem_tokens) > 1 and normalize_key(stem_tokens[1]) == canon_key
+            )
             if is_ambiguous_key(canon_key) or (
                 is_weak_single_token(canon_norm, canon_key, canonical=True)
-                and not manual_gallery_match
+                and not (manual_gallery_match or manual_date_prefix_match)
             ):
                 continue
             if canon_norm and canon_norm in joined:
