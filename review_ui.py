@@ -231,7 +231,8 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
     @app.get("/api/summary")
     def summary():
         report = payload.get("report") or {}
-        return jsonify({"audit": str(audit_path), "report": report, "clusters": len(clusters), "decisions": len(decisions), "cache": str(audit_path.with_suffix(".clusters.json"))})
+        compact_report = {key: value for key, value in report.items() if key not in {"gallery_sets", "results"}}
+        return jsonify({"audit": str(audit_path), "report": compact_report, "clusters": len(clusters), "decisions": len(decisions), "cache": str(audit_path.with_suffix(".clusters.json"))})
 
     @app.get("/api/clusters")
     def list_clusters():
