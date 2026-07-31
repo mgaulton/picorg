@@ -136,6 +136,19 @@ python3 reverse_search_contact_sheet.py \
   --limit 40
 ```
 
+Launch the local candidate-cluster review UI (binds to loopback by default):
+
+```bash
+python3 review_ui.py \
+  --audit /tmp/picorg_sorted_audit/20260731T170645Z.json \
+  --decisions /opt/picorg/review_decisions.json
+```
+
+Open `http://127.0.0.1:8787/`. The UI shows the top 2,000 unmatched clusters,
+previews allowlisted local media, and records explicit assignments in
+`review_decisions.json`. It never moves files or edits the registry; promote
+reviewed decisions only after recording independent evidence.
+
 Apply mode exists, but should be used only when the destination tree is writable and the audit output has been reviewed.
 
 For manual operator runs, use [`RUNBOOK.md`](/opt/picorg/RUNBOOK.md), [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md), and the wrapper script [`picorg_manual.sh`](/opt/picorg/picorg_manual.sh).
