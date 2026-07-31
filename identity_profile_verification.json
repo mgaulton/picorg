@@ -35,6 +35,31 @@
         }
       ],
       "notes": "Imported from the corroborated Sadie Sink example in IDENTITY_PROFILE_VERIFICATION.md; Reddit sources remain monitoring evidence only."
+    },
+    {
+      "canonical": "MrsRepsOG",
+      "status": "candidate",
+      "checked": "2026-07-31",
+      "profiles": [
+        {
+          "platform": "reddit",
+          "handle": "MrsRepsOG",
+          "canonical_url": "https://www.reddit.com/user/MrsRepsOG/"
+        }
+      ],
+      "evidence": [
+        {
+          "tier": 3,
+          "url": "https://www.reddit.com/user/MrsRepsOG/",
+          "notes": "Public Reddit user URL recorded from the followed-user catalog."
+        },
+        {
+          "tier": 3,
+          "url": "https://www.reddit.com/r/MrsRepsOG/",
+          "notes": "Public subreddit URL recorded from the subscribed-source catalog."
+        }
+      ],
+      "notes": "User-confirmed followed Reddit username; do not import as a person identity until image or independent profile corroboration exists."
     }
   ]
 }
