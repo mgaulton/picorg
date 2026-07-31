@@ -17,6 +17,7 @@ from picorg_sorter import gallery_base_title, title_from_path
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+GENERIC_TITLE_TOKENS = {"img", "fb", "rdt", "good", "morning", "mommy", "goddess", "daddy", "sexy", "hot"}
 
 
 def file_sha256(path: Path) -> str:
@@ -30,6 +31,12 @@ def file_sha256(path: Path) -> str:
 def queue_items(audit: Dict[str, object], limit: int) -> List[Dict[str, object]]:
     items: List[Dict[str, object]] = []
     seen_hashes = set()
+    candidates: List[Dict[str, object]] = []
+    gallery_counts = {
+        str(item.get("base_title")): int(item.get("count", 0))
+        for item in audit.get("gallery_sets", [])
+        if isinstance(item, dict) and item.get("identity") == "unmatched"
+    }
     for result in audit.get("results", []):
         if not isinstance(result, dict) or result.get("canonical"):
             continue
@@ -40,20 +47,22 @@ def queue_items(audit: Dict[str, object], limit: int) -> List[Dict[str, object]]
             is_file = False
         if source.suffix.lower() not in IMAGE_EXTENSIONS or not is_file:
             continue
-        try:
-            digest = file_sha256(source)
-        except OSError:
-            continue
-        if digest in seen_hashes:
-            continue
-        seen_hashes.add(digest)
         title = str(result.get("title") or title_from_path(source))
-        items.append(
+        words = [word for word in title.lower().split() if word.isalpha()]
+        title_key = gallery_base_title(title)
+        priority = gallery_counts.get(title_key, 1) * 10
+        priority += min(len(words), 5) * 3
+        priority += min(len(title), 80) // 20
+        priority -= sum(token in GENERIC_TITLE_TOKENS for token in words) * 8
+        meaningful_words = [word for word in words if word not in GENERIC_TITLE_TOKENS and len(word) >= 3]
+        if not meaningful_words or all(word.isdigit() for word in meaningful_words):
+            priority -= 100000
+        candidates.append(
             {
                 "path": str(source),
-                "sha256": digest,
                 "title": title,
                 "gallery_key": gallery_base_title(title),
+                "priority": priority,
                 "source_root": result.get("source_root"),
                 "source_family": result.get("source_family"),
                 "status": "pending_review",
@@ -63,6 +72,19 @@ def queue_items(audit: Dict[str, object], limit: int) -> List[Dict[str, object]]
                 "notes": "Do not upload without explicit permission; candidate requires independent corroboration.",
             }
         )
+    candidates.sort(key=lambda item: (-int(item["priority"]), str(item["path"])))
+    hash_budget = max(limit * 5, limit)
+    for candidate in candidates[:hash_budget]:
+        source = Path(str(candidate["path"]))
+        try:
+            digest = file_sha256(source)
+        except OSError:
+            continue
+        if digest in seen_hashes:
+            continue
+        seen_hashes.add(digest)
+        candidate["sha256"] = digest
+        items.append(candidate)
         if len(items) >= limit:
             break
     return items
@@ -77,7 +99,10 @@ def main() -> int:
     payload = json.loads(args.audit.read_text(encoding="utf-8"))
     audit = payload.get("report", payload) if isinstance(payload, dict) else {}
     results = payload.get("results", []) if isinstance(payload, dict) else []
-    queue = queue_items({"results": results}, max(0, args.limit))
+    queue = queue_items(
+        {"results": results, "gallery_sets": audit.get("gallery_sets", [])},
+        max(0, args.limit),
+    )
     output = {
         "schema_version": 1,
         "source_audit": str(args.audit),
