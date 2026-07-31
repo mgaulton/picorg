@@ -122,7 +122,7 @@ def export_confirmed_decisions(decisions_path: Path, registry_path: Path = DEFAU
             continue
         canonical = str(decision.get("identity") or "").strip()
         family = str(decision.get("family") or "review").strip()
-        if not canonical or family not in FAMILIES:
+        if not canonical or family not in (FAMILIES - {"review"}):
             continue
         aliases = [str(alias).strip() for alias in decision.get("aliases", []) if str(alias).strip()]
         key = (family, sorter.normalize_key(canonical))
@@ -136,6 +136,8 @@ def export_confirmed_decisions(decisions_path: Path, registry_path: Path = DEFAU
         if note and note not in str(entry.get("notes") or ""):
             entry["notes"] = (str(entry.get("notes") or "").rstrip() + " [review-ui] " + note).strip()
         promoted += 1
+    if promoted == 0:
+        return 0
     fd, temp_name = tempfile.mkstemp(prefix=f".{registry_path.name}.", dir=str(registry_path.parent), text=True)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -188,6 +190,17 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS) -> Fl
     def identities():
         catalog, _, _, _, _ = sorter.load_identity_catalog()
         return jsonify([{"canonical": item.canonical, "family": item.family} for item in catalog])
+
+    @app.get("/api/decisions")
+    def list_decisions():
+        counts = {status: sum(item.get("status", "pending") == status for item in decisions.values()) for status in DECISION_STATUSES}
+        return jsonify({"counts": counts, "decisions": list(decisions.values())})
+
+    @app.get("/api/export-preview")
+    def export_preview():
+        promotable = [item for item in decisions.values() if item.get("status") == "confirmed" and item.get("family") in (FAMILIES - {"review"})]
+        skipped = [item for item in decisions.values() if item not in promotable]
+        return jsonify({"promotable": promotable, "skipped": skipped})
 
     @app.post("/api/decisions")
     def save_decision():

@@ -163,6 +163,9 @@ The bulk endpoint (`POST /api/decisions/bulk`) can assign the same identity to
 several selected cluster IDs; it still records the chosen status and requires
 an explicit later export for registry changes.
 
+Use `GET /api/export-preview` to inspect which confirmed decisions are
+promotable. Decisions with the provisional `review` family are never exported.
+
 Apply mode exists, but should be used only when the destination tree is writable and the audit output has been reviewed.
 
 For manual operator runs, use [`RUNBOOK.md`](/opt/picorg/RUNBOOK.md), [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md), and the wrapper script [`picorg_manual.sh`](/opt/picorg/picorg_manual.sh).

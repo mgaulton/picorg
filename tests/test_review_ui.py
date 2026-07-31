@@ -72,3 +72,13 @@ def test_export_promotes_confirmed_only(tmp_path):
     assert review_ui.export_confirmed_decisions(decisions, registry) == 1
     entries = json.loads(registry.read_text())["entries"]
     assert [item["canonical"] for item in entries] == ["creator_a"]
+
+
+def test_review_family_is_not_exportable(tmp_path):
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps({"decisions": [{"cluster_id": "review", "identity": "creator", "family": "review", "status": "confirmed"}]}), encoding="utf-8")
+
+    assert review_ui.export_confirmed_decisions(decisions, registry) == 0
+    assert json.loads(registry.read_text())["entries"] == []
