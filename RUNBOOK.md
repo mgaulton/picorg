@@ -132,6 +132,7 @@ Treat a run as production-ready only when all of the following are true:
 - High-confidence exact registry hits may be used to promote a folder or file in a dry-run analysis.
 - Medium-confidence items require a second supporting signal before apply.
 - Low-confidence items stay in review unless the source family has already been validated.
+- Apply mode currently moves only matches at or above `0.95` confidence; weaker matches are reported as skipped.
 - Generic-word collisions should be treated as false-positive risk, not as new identities.
 - Gallery-level decisions should override isolated filename noise when the series is clearly one post.
 - Source-family shifts should trigger registry expansion, not broader fuzziness.

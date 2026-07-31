@@ -43,9 +43,10 @@ DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
 DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
-DEFAULT_RESOLVER_VERSION = "2026-07-30.1"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.8"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
+DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
 OCR_SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
 FRIENDS_FILE = Path("/opt/redditgrab/friend.txt")
@@ -336,7 +337,9 @@ def load_cached_catalog(cache_file: Path, current_state: Dict[str, object]) -> O
         return None
     if not isinstance(payload, dict):
         return None
-    if payload.get("schema_version") != 1:
+    if payload.get("schema_version") != 2:
+        return None
+    if payload.get("resolver_version") != DEFAULT_RESOLVER_VERSION:
         return None
     if payload.get("source_state") != current_state:
         return None
@@ -390,7 +393,8 @@ def write_catalog_cache(
     preferred_alias_targets: Dict[str, str],
 ) -> None:
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "resolver_version": DEFAULT_RESOLVER_VERSION,
         "source_state": current_state,
         "project_blocked_tokens": sorted(PROJECT_BLOCKED_TOKENS),
         "project_ambiguous_tokens": sorted(PROJECT_AMBIGUOUS_TOKENS),
@@ -428,7 +432,8 @@ def dry_run_state(root_paths: Sequence[Path], ocr_enabled_flag: bool) -> Dict[st
 
 def dry_run_root_state(root: Path, ocr_enabled_flag: bool) -> Dict[str, object]:
     state: Dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "resolver_version": DEFAULT_RESOLVER_VERSION,
         "root": str(root),
         "root_snapshot": path_snapshot(root, "dir"),
         "catalog_state": catalog_source_state(),
@@ -694,7 +699,8 @@ def load_identity_catalog() -> Tuple[
             return
         alias_index[alias_key].add(identity)
         for token in tokenize(normalize(alias)):
-            token_index[token].add(identity)
+            if len(token) >= 5 or any(char.isdigit() for char in token):
+                token_index[token].add(identity)
 
     def add_identity(
         canonical: str,
@@ -821,7 +827,11 @@ def load_identity_catalog() -> Tuple[
                 continue
             canonical = str(item.get("primary_folder") or item.get("id") or "").strip()
             aliases = set()
-            for key in ("id", "primary_folder", "display_names", "search_terms"):
+            is_aggregate = "aggregate identity" in str(item.get("notes", "")).lower()
+            alias_keys = ("id", "primary_folder")
+            if not is_aggregate:
+                alias_keys += ("display_names", "search_terms")
+            for key in alias_keys:
                 value = item.get(key)
                 if isinstance(value, list):
                     aliases.update(str(entry).strip() for entry in value if str(entry).strip())
@@ -1170,10 +1180,16 @@ def best_identity_match(
     def is_ambiguous_key(value: str) -> bool:
         return normalize_key(value) in PROJECT_AMBIGUOUS_TOKENS
 
+    def is_weak_single_token(value: str, key: str, *, canonical: bool = False) -> bool:
+        if " " in value or any(char.isdigit() for char in key):
+            return False
+        minimum = 8 if canonical else 10
+        return len(key) < minimum
+
     for piece in normalized_pieces:
         exact_key = normalize_key(piece)
         exact_hits = alias_index.get(exact_key, set())
-        if exact_key in PROJECT_AMBIGUOUS_TOKENS:
+        if exact_key in PROJECT_AMBIGUOUS_TOKENS or len(exact_key) < 10:
             continue
         if exact_key in PROJECT_BLOCKED_TOKENS and not exact_hits:
             continue
@@ -1238,12 +1254,12 @@ def best_identity_match(
                     tuple((normalize(alias), normalize_key(alias)) for alias in identity.aliases if normalize(alias)),
                 ),
             )
-            if is_ambiguous_key(canon_key):
+            if is_ambiguous_key(canon_key) or is_weak_single_token(canon_norm, canon_key, canonical=True):
                 continue
             if canon_norm and canon_norm in joined:
                 consider(identity, 0.95, "contains:canonical")
             for alias_norm, alias_key in alias_pairs:
-                if is_ambiguous_key(alias_key):
+                if is_ambiguous_key(alias_key) or is_weak_single_token(alias_norm, alias_key):
                     continue
                 if alias_key in joined_key:
                     consider(identity, 0.98 if alias_norm in normalized_pieces else 0.92, f"alias:{alias_norm}")
@@ -1262,8 +1278,13 @@ def best_identity_match(
             if title_joined:
                 if canon_norm in title_joined:
                     consider(identity, 0.91, "title-contains-canonical")
-                for alias_norm, _alias_key in alias_pairs:
-                    if alias_norm and alias_norm in title_joined:
+                for alias_norm, alias_key in alias_pairs:
+                    if (
+                        alias_norm
+                        and not is_ambiguous_key(alias_key)
+                        and not is_weak_single_token(alias_norm, alias_key)
+                        and alias_norm in title_joined
+                    ):
                         consider(identity, 0.93, f"title-contains-alias:{alias_norm}")
 
             if ocr_joined:
@@ -1276,8 +1297,6 @@ def best_identity_match(
                         consider(identity, 0.84, f"ocr-substring:{alias_norm}")
 
     score_identity_pool(candidate_identities)
-    if best[1] < 0.95:
-        score_identity_pool(catalog)
 
     if cache_key is not None and match_cache is not None:
         match_cache[cache_key] = best
@@ -1793,6 +1812,7 @@ def apply_results(
     skipped = 0
     duplicates = 0
     unmatched = 0
+    weak_skipped = 0
 
     folder_candidates: List[Tuple[Path, Path, Identity, List[MatchResult]]] = []
     seen_folder_sigs: Dict[Tuple[str, str, str], Path] = {}
@@ -1801,7 +1821,12 @@ def apply_results(
             continue
         if not dir_results:
             continue
-        if any(not r.family or not r.canonical for r in dir_results):
+        if any(
+            not r.family
+            or not r.canonical
+            or r.confidence < DEFAULT_APPLY_MIN_CONFIDENCE
+            for r in dir_results
+        ):
             continue
         identities = {(r.family, r.canonical) for r in dir_results}
         if len(identities) != 1:
@@ -1850,6 +1875,9 @@ def apply_results(
         if not result.family or not result.canonical:
             unmatched += 1
             continue
+        if result.confidence < DEFAULT_APPLY_MIN_CONFIDENCE:
+            weak_skipped += 1
+            continue
         identity = Identity(result.canonical, result.family, ())
         dest_dir = destination_for(identity, dest_root=dest_root)
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -1884,6 +1912,7 @@ def apply_results(
         "duplicates_detected": duplicates,
         "duplicate_folders_detected": duplicate_folders,
         "unmatched_seen": unmatched,
+        "weak_skipped": weak_skipped,
         "dest_root": str(dest_root),
         "audit_root": str(audit_root),
         "run_id": run_id,

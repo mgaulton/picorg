@@ -106,6 +106,49 @@ def test_load_identity_catalog_uses_directory_entries_without_files(tmp_path, mo
     assert any(identity.canonical == "gamma_user" for identity in refreshed_catalog)
 
 
+def test_aggregate_metadaily_entries_do_not_import_member_names(tmp_path, monkeypatch) -> None:
+    registry_file = tmp_path / "project_registry.json"
+    registry_file.write_text(
+        json.dumps({"blocked_tokens": [], "preferred_alias_targets": {}, "entries": []}),
+        encoding="utf-8",
+    )
+    aliases_file = tmp_path / "identity_aliases.json"
+    aliases_file.write_text(
+        json.dumps(
+            {
+                "identities": [
+                    {
+                        "id": "aggregate_folder",
+                        "primary_folder": "aggregate_folder",
+                        "display_names": ["Member Name"],
+                        "search_terms": ["Member Name"],
+                        "notes": "Aggregate identity for routing",
+                        "status": "confirmed",
+                        "reddit": {"users": ["aggregate_folder"], "subreddits": []},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty_file = tmp_path / "empty.txt"
+    empty_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ps, "PROJECT_REGISTRY_FILE", registry_file)
+    monkeypatch.setattr(ps, "METADAILY_IDENTITY_ALIASES_FILE", aliases_file)
+    monkeypatch.setattr(ps, "FRIENDS_FILE", empty_file)
+    monkeypatch.setattr(ps, "PSCRAPE_FILE", empty_file)
+    monkeypatch.setattr(ps, "IMDB_FILE", empty_file)
+    monkeypatch.setattr(ps, "METADAILY_ACCOUNTS_FILE", empty_file)
+    monkeypatch.setattr(ps, "STRONG_TEXT_SOURCE_FILES", [])
+    monkeypatch.setattr(ps, "WEAK_TEXT_SOURCE_FILES", [])
+    monkeypatch.setenv("PICORG_CATALOG_CACHE", str(tmp_path / "catalog-cache.json"))
+
+    _catalog, alias_index, *_rest = ps.load_identity_catalog()
+
+    assert ps.normalize_key("aggregate_folder") in alias_index
+    assert ps.normalize_key("Member Name") not in alias_index
+
+
 def test_dry_run_cache_round_trip_and_invalidation(tmp_path) -> None:
     cache_file = tmp_path / "dry-run-cache.json"
     roots = [Path("/mnt/a"), Path("/mnt/b")]
@@ -163,6 +206,27 @@ def test_ambiguous_exact_word_abstains_without_reddit_context(tmp_path, monkeypa
     alias_index = {ps.normalize_key("pov"): {identity}}
     token_index = {"pov": {identity}}
     monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", {"pov"})
+    ps.build_identity_scoring_cache([identity])
+
+    matched, confidence, rule = best_identity_match(
+        path, root, [identity], alias_index, token_index
+    )
+
+    assert matched is None
+    assert confidence == 0.0
+    assert rule == "unmatched"
+
+
+def test_short_profile_alias_does_not_override_caption_identity(tmp_path, monkeypatch) -> None:
+    root = Path("/mnt/picorg-test-mixedpics")
+    path = root / "Emma.jpg"
+    identity = ps.Identity("celebswearingglasses", "metadaily", ("Emma",))
+    alias_index = {
+        ps.normalize_key("celebswearingglasses"): {identity},
+        ps.normalize_key("Emma"): {identity},
+    }
+    token_index = {"celebswearingglasses": {identity}, "emma": {identity}}
+    monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", set())
     ps.build_identity_scoring_cache([identity])
 
     matched, confidence, rule = best_identity_match(

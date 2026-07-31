@@ -14,6 +14,7 @@ Deterministic organizer for mixed Reddit media intake.
 - `run_media_pipeline.sh` can sequence remote intake, picorg dry-run/apply, and the photo_reorg dry-run; intake and apply are opt-in.
 - `/mnt/elements16a/Pron/metadaily` and `/mnt/elements16a/Pron/redditdaily` are permanently separate protected source stores. They may be read for identity/profile references, but ingest, dedupe, and picorg apply never move or modify them.
 - Generic unmatched clusters can be sampled through `face_group_unmatched.py`; it uses the high-accuracy face DB to produce report-only identity groups for review before aliases or apply decisions.
+- Apply mode skips matches below `0.95` confidence and reports them for review.
 - Face grouping supports deterministic `--offset`, `--max-files`, and `--checkpoint` batching so the full unmatched set can be processed and resumed without repeating earlier work.
 - The face-grouping environment requires `setuptools<81` because the installed `face_recognition_models` package imports the legacy `pkg_resources` API.
 - `run_face_group_batches.sh` resumes all batches and finishes with `reconcile_face_group_batches.py`, which deduplicates paths and evaluates cross-batch cluster consensus.
