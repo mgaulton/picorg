@@ -29,11 +29,13 @@ if ! .venv/bin/python -c 'import face_recognition' >/dev/null 2>&1; then
 fi
 
 if [[ ! -s "$FACE_AUDIT" || "${FORCE_FACE_REBUILD:-0}" == "1" ]]; then
+    echo "building face clusters from $AUDIT (this may take time for large collections)"
     .venv/bin/python face_cluster_unmatched.py \
         --audit "$AUDIT" \
         --output "$FACE_AUDIT"
 fi
 
+echo "reconciling name and face clusters"
 .venv/bin/python reconcile_review_clusters.py \
     --name-audit "$AUDIT" \
     --face-audit "$FACE_AUDIT" \

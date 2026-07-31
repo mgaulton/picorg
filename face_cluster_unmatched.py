@@ -99,6 +99,8 @@ def extract_embeddings(
         if max_images and stats["selected"] >= max_images:
             break
         stats["selected"] += 1
+        if stats["selected"] % 100 == 0:
+            print(f"face extraction: selected={stats['selected']} embedded={stats['embedded']}", flush=True)
         path = Path(str(item["path"]))
         try:
             image = face_recognition.load_image_file(str(path))
