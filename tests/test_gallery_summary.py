@@ -250,6 +250,15 @@ def test_match_cache_signature_collapses_gallery_number_variants() -> None:
     assert match_cache_signature(first, root, context, "") == match_cache_signature(second, root, context, "")
 
 
+def test_match_cache_signature_keeps_word_boundaries() -> None:
+    root = Path("/mnt/desktop")
+    spaced = root / "Kaja Mood.jpg"
+    joined = root / "Kajamood.jpg"
+    context = {"subreddits": [], "users": [], "context": []}
+
+    assert match_cache_signature(spaced, root, context, "") != match_cache_signature(joined, root, context, "")
+
+
 def test_downloader_hints_extract_name_after_post_id(tmp_path) -> None:
     root = tmp_path / "jdownloaderscomplete"
     path = root / "2026-05-02_InfluencerNSFW_global_1t1c8u7_morgan_vera_00001.jpg"
@@ -312,6 +321,24 @@ def test_short_manual_alias_matches_exact_gallery_title(tmp_path, monkeypatch) -
     root = tmp_path / "mixedpics"
     path = root / "Jameliz (1).jpg"
     identity = ps.Identity("jameliz", "manual", ())
+    alias_index = {ps.normalize_key("jameliz"): {identity}}
+    token_index = {"jameliz": {identity}}
+    monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", set())
+    ps.build_identity_scoring_cache([identity])
+
+    matched, confidence, rule = best_identity_match(
+        path, root, [identity], alias_index, token_index
+    )
+
+    assert matched == identity
+    assert confidence == 1.0
+    assert rule == "exact:jameliz"
+
+
+def test_short_manual_alias_survives_scoring_for_exact_gallery_title(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "mixedpics"
+    path = root / "Jameliz (1).jpg"
+    identity = ps.Identity("jameliz", "manual", ("Jameliz",))
     alias_index = {ps.normalize_key("jameliz"): {identity}}
     token_index = {"jameliz": {identity}}
     monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", set())

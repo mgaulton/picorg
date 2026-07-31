@@ -43,7 +43,7 @@ DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
 DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
-DEFAULT_RESOLVER_VERSION = "2026-07-31.21"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.23"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -1167,7 +1167,10 @@ def match_cache_signature(path: Path, root: Path, reddit_context: Dict[str, List
     rel = path.relative_to(root)
     parent_key = "/".join(normalize_key(part) for part in rel.parent.parts if normalize_key(part))
     base_title = gallery_base_title(title_from_path(path))
-    title_key = normalize_key(base_title)
+    # Keep word boundaries in the cache key: ``Kaja Mood`` and ``Kajamood``
+    # are distinct labels even though normalize_key() intentionally removes
+    # spaces for alias lookup.
+    title_key = normalize(base_title)
     return "|".join(
         [
             parent_key,
@@ -1324,12 +1327,22 @@ def best_identity_match(
                     tuple((normalize(alias), normalize_key(alias)) for alias in identity.aliases if normalize(alias)),
                 ),
             )
-            if is_ambiguous_key(canon_key) or is_weak_single_token(canon_norm, canon_key, canonical=True):
+            manual_gallery_match = identity.family == "manual" and (
+                canon_key == exact_gallery_key
+                or any(alias_key == exact_gallery_key for _, alias_key in alias_pairs)
+            )
+            if is_ambiguous_key(canon_key) or (
+                is_weak_single_token(canon_norm, canon_key, canonical=True)
+                and not manual_gallery_match
+            ):
                 continue
             if canon_norm and canon_norm in joined:
                 consider(identity, 0.95, "contains:canonical")
             for alias_norm, alias_key in alias_pairs:
-                if is_ambiguous_key(alias_key) or is_weak_single_token(alias_norm, alias_key):
+                if is_ambiguous_key(alias_key) or (
+                    is_weak_single_token(alias_norm, alias_key)
+                    and not (manual_gallery_match and alias_key == exact_gallery_key)
+                ):
                     continue
                 if alias_key in joined_key:
                     consider(identity, 0.98 if alias_norm in normalized_pieces else 0.92, f"alias:{alias_norm}")
