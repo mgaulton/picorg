@@ -99,6 +99,20 @@ This uses ImageMagick-normalized image fingerprints, never contacts websites,
 and never changes files. A match is corroborating evidence only; it does not
 create an identity alias or authorize apply mode.
 
+For unmatched images that need external review, export a privacy-preserving
+queue containing paths, hashes, and title hints:
+
+```bash
+python3 reverse_search_queue.py \
+  /tmp/picorg_sorted_audit/20260731T152301Z.json \
+  --output /tmp/picorg_reverse_search_queue.json \
+  --limit 100
+```
+
+Use a permitted reverse-image provider manually, record candidate URLs and
+independent corroboration in the queue, and promote only confirmed identities
+to `identity_profile_verification.json`. The queue tool never uploads media.
+
 Apply mode exists, but should be used only when the destination tree is writable and the audit output has been reviewed.
 
 For manual operator runs, use [`RUNBOOK.md`](/opt/picorg/RUNBOOK.md), [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md), and the wrapper script [`picorg_manual.sh`](/opt/picorg/picorg_manual.sh).
