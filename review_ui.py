@@ -464,6 +464,12 @@ window.addEventListener('unhandledrejection',event=>{let detail=document.querySe
 </script></body></html>"""
 
 
+HTML_PAGE = (HTML_PAGE.replace("join('\n')", "join('\\n')")
+             .replace("split('\n')", "split(String.fromCharCode(10))")
+             .replace('onclick="updateMember(\'add\')"', 'onclick="updateMember(&#39;add&#39;)"')
+             .replace('onclick="updateMember(\'remove\')"', 'onclick="updateMember(&#39;remove&#39;)"'))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audit", type=Path, help="audit JSON; defaults to newest file in /tmp/picorg_sorted_audit")
