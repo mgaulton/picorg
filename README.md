@@ -41,6 +41,7 @@ See [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md) for the manual work
 - `/opt/list.imdburl`
 - `/opt/metadaily/social_accounts.txt`
 - Confirmed profiles and aliases from `/opt/metadaily/data/identity_aliases.json`
+- Confirmed profile evidence from [`identity_profile_verification.json`](/opt/picorg/identity_profile_verification.json); only `confirmed` records with at least two evidence URLs import handles
 - `/opt/redditdaily/redditsubs.txt`
 - `/opt/redditdaily/data/`
 - Existing folder names under `/mnt/elements16a/Pron/redditdaily`
@@ -75,6 +76,29 @@ Inspect catalog:
 python3 picorg_sorter.py inspect --limit 20
 ```
 
+## Profile verification and image references
+
+Use [`/opt/redditdaily/docs/IDENTITY_PROFILE_VERIFICATION.md`](/opt/redditdaily/docs/IDENTITY_PROFILE_VERIFICATION.md)
+to review public profile candidates. Record only confirmed accounts in
+[`identity_profile_verification.json`](/opt/picorg/identity_profile_verification.json), with a canonical URL,
+verification date, and first-party/independent evidence. Candidate and probable
+accounts remain review-only.
+
+For image corroboration, download or otherwise obtain permitted public reference
+images manually, place them under `<family>__<canonical>/`, and run the offline
+reporter:
+
+```bash
+python3 profile_image_match.py \
+  --references /tmp/photo_reorg_social_references \
+  --root /mnt/elements16/@mixedpics \
+  --output /tmp/picorg_profile_image_matches.json
+```
+
+This uses ImageMagick-normalized image fingerprints, never contacts websites,
+and never changes files. A match is corroborating evidence only; it does not
+create an identity alias or authorize apply mode.
+
 Apply mode exists, but should be used only when the destination tree is writable and the audit output has been reviewed.
 
 For manual operator runs, use [`RUNBOOK.md`](/opt/picorg/RUNBOOK.md), [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md), and the wrapper script [`picorg_manual.sh`](/opt/picorg/picorg_manual.sh).
@@ -107,15 +131,15 @@ Production-ready runs should meet the same acceptance criteria described in [`RU
 
 ## Dry-run baseline
 
-Latest full audit (`20260731T151103Z`):
+Latest full audit (`20260731T151913Z`):
 
 - Scanned: 49,995
-- Matched: 1,062
-- Unmatched: 48,933
-- High confidence: 594
+- Matched: 1,157
+- Unmatched: 48,838
+- High confidence: 689
 - Labeled precision: 1.0
-- Labeled recall: 0.7236
-- Match coverage: 0.0212
+- Labeled recall: 0.7335
+- Match coverage: 0.0231
 
 The audit also reports labeled precision (correct predictions / predictions), labeled recall
 (correct predictions / labeled cases), and coverage by intake source. `ground_truth_accuracy`

@@ -159,6 +159,60 @@
       "notes": "Validated against /opt/metadaily/data/identity_aliases.json and local ms_francescacapaldi source evidence."
     },
     {
+      "family": "manual",
+      "canonical": "mona_marie",
+      "aliases": ["Mona Marie"],
+      "notes": "Validated from the repeated exact Mona Marie filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "kay_panabaker",
+      "aliases": ["Kay Panabaker"],
+      "notes": "Validated from the repeated exact Kay Panabaker filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "lea_martinez",
+      "aliases": ["Lea Martinez"],
+      "notes": "Validated from the repeated exact Lea Martinez filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "lily_brooks_obriant",
+      "aliases": ["Lily Brooks OBriant", "Lily Brooks O'Briant"],
+      "notes": "Validated from the repeated exact Lily Brooks OBriant filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "sara_mei_kasai",
+      "aliases": ["Sara Mei Kasai"],
+      "notes": "Validated from the repeated exact Sara Mei Kasai filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "victoria_picarella",
+      "aliases": ["Victoria Picarella"],
+      "notes": "Validated from the repeated exact Victoria Picarella filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "caitlin_christine",
+      "aliases": ["Caitlin Christine"],
+      "notes": "Validated from the repeated exact Caitlin Christine filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "sirena_milano",
+      "aliases": ["Sirena Milano"],
+      "notes": "Validated from the repeated exact Sirena Milano filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "sterre_meijer",
+      "aliases": ["Sterre Meijer"],
+      "notes": "Validated from the repeated exact Sterre Meijer filename/title cluster; full phrase only."
+    },
+    {
       "family": "pscrape",
       "canonical": "hannahowo",
       "aliases": ["Hannah Owo", "hannah owo"],

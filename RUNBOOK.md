@@ -110,6 +110,19 @@ Treat a run as production-ready only when all of the following are true:
 - `ground_truth_precision` and `ground_truth_recall` are each at least `0.99`.
 - No new low-confidence cluster appears in the top matches.
 - The unmatched tail is still dominated by known generic or camera-generated clusters.
+
+## Profile and image verification
+
+Use `/opt/redditdaily/docs/IDENTITY_PROFILE_VERIFICATION.md` before adding public
+profile handles. Record confirmed evidence in
+`/opt/picorg/identity_profile_verification.json`; candidate and probable
+profiles are intentionally ignored by routing.
+
+For permitted public reference images, use `profile_image_match.py` with a
+local reference tree and review its JSON report. It uses normalized image
+fingerprints only, never fetches URLs, and never authorizes apply mode. Exact or
+near-identical reference hits are corroboration for a human review, not proof
+of identity by themselves.
 - Any new aliases are verified before they are added to [`project_registry.json`](/opt/picorg/project_registry.json).
 - Precedence-sensitive identities still resolve to the intended canonical target.
 

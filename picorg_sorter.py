@@ -43,7 +43,7 @@ DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
 DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
-DEFAULT_RESOLVER_VERSION = "2026-07-31.14"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.16"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -54,6 +54,7 @@ PSCRAPE_FILE = Path("/opt/pscrape/redditors.txt")
 IMDB_FILE = Path("/opt/list.imdburl")
 METADAILY_ACCOUNTS_FILE = Path("/opt/metadaily/social_accounts.txt")
 METADAILY_IDENTITY_ALIASES_FILE = Path("/opt/metadaily/data/identity_aliases.json")
+PROFILE_VERIFICATION_FILE = Path("/opt/picorg/identity_profile_verification.json")
 PROJECT_REGISTRY_FILE = Path("/opt/picorg/project_registry.json")
 REDDITDAILY_ROOT = Path("/mnt/elements16a/Pron/redditdaily")
 PSCRAPE_ROOT = Path("/mnt/elements16a/Pron/pscrape")
@@ -123,6 +124,7 @@ IGNORED_DIR_NAMES = {
 FAMILY_PRIORITY = {
     "redditdaily": 50,
     "metadaily": 45,
+    "profile_verified": 44,
     "reddit_friends": 40,
     "pscrape": 35,
     "imdb": 30,
@@ -279,6 +281,7 @@ def catalog_source_state() -> Dict[str, object]:
         IMDB_FILE,
         METADAILY_ACCOUNTS_FILE,
         METADAILY_IDENTITY_ALIASES_FILE,
+        PROFILE_VERIFICATION_FILE,
     ]
     files.extend(STRONG_TEXT_SOURCE_FILES)
     files.extend(WEAK_TEXT_SOURCE_FILES)
@@ -812,6 +815,31 @@ def load_identity_catalog() -> Tuple[
     }
     add_registry_entries(registry.get("entries", []))
 
+    # Confirmed external profiles are opt-in evidence. Candidate/probable or
+    # under-documented records remain review-only and never affect routing.
+    if PROFILE_VERIFICATION_FILE.exists():
+        try:
+            profile_payload = json.loads(PROFILE_VERIFICATION_FILE.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            profile_payload = {}
+        for item in profile_payload.get("identities", []) if isinstance(profile_payload, dict) else []:
+            if not isinstance(item, dict) or item.get("status") != "confirmed":
+                continue
+            canonical = str(item.get("canonical") or "").strip()
+            evidence = item.get("evidence") or []
+            profiles = item.get("profiles") or []
+            if not canonical or len(evidence) < 2 or not isinstance(profiles, list):
+                continue
+            aliases = set()
+            for profile in profiles:
+                if not isinstance(profile, dict):
+                    continue
+                handle = str(profile.get("handle") or "").strip()
+                if handle:
+                    aliases.add(handle)
+            if aliases:
+                add_identity(canonical, "profile_verified", aliases, source_kind="strong")
+
     # The protected metadaily registry is the authoritative source for
     # confirmed profile folders, display names, and Reddit handles.  It is
     # read-only input; nothing under that store is ever moved by picorg.
@@ -987,7 +1015,10 @@ def _read_reddit_sidecar(path: Path) -> Dict[str, List[str]]:
     values = {"metadata_users": [], "metadata_subreddits": [], "metadata_context": [], "reddit_post_ids": []}
     sidecars = (path.with_suffix(path.suffix + ".json"), path.with_suffix(".json"))
     for sidecar in sidecars:
-        if not sidecar.is_file():
+        try:
+            if not sidecar.is_file():
+                continue
+        except OSError:
             continue
         try:
             payload = json.loads(sidecar.read_text(encoding="utf-8"))

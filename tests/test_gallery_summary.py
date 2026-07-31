@@ -149,6 +149,54 @@ def test_aggregate_metadaily_entries_do_not_import_member_names(tmp_path, monkey
     assert ps.normalize_key("Member Name") not in alias_index
 
 
+def test_confirmed_profile_evidence_imports_handles_only(tmp_path, monkeypatch) -> None:
+    registry_file = tmp_path / "project_registry.json"
+    registry_file.write_text(
+        json.dumps({"blocked_tokens": [], "preferred_alias_targets": {}, "entries": []}),
+        encoding="utf-8",
+    )
+    profile_file = tmp_path / "identity_profile_verification.json"
+    profile_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "identities": [
+                    {
+                        "canonical": "confirmed_person",
+                        "status": "confirmed",
+                        "profiles": [{"platform": "instagram", "handle": "confirmed_handle"}],
+                        "evidence": [{"tier": 1, "url": "https://example.test/official"}, {"tier": 2, "url": "https://example.test/reference"}],
+                    },
+                    {
+                        "canonical": "candidate_person",
+                        "status": "candidate",
+                        "profiles": [{"platform": "x", "handle": "candidate_handle"}],
+                        "evidence": [{"tier": 3, "url": "https://example.test/fan"}],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty_file = tmp_path / "empty.txt"
+    empty_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ps, "PROJECT_REGISTRY_FILE", registry_file)
+    monkeypatch.setattr(ps, "PROFILE_VERIFICATION_FILE", profile_file)
+    monkeypatch.setattr(ps, "FRIENDS_FILE", empty_file)
+    monkeypatch.setattr(ps, "PSCRAPE_FILE", empty_file)
+    monkeypatch.setattr(ps, "IMDB_FILE", empty_file)
+    monkeypatch.setattr(ps, "METADAILY_ACCOUNTS_FILE", empty_file)
+    monkeypatch.setattr(ps, "METADAILY_IDENTITY_ALIASES_FILE", empty_file)
+    monkeypatch.setattr(ps, "STRONG_TEXT_SOURCE_FILES", [])
+    monkeypatch.setattr(ps, "WEAK_TEXT_SOURCE_FILES", [])
+    monkeypatch.setenv("PICORG_CATALOG_CACHE", str(tmp_path / "catalog-cache.json"))
+
+    _catalog, alias_index, *_rest = ps.load_identity_catalog()
+
+    assert ps.normalize_key("confirmed_handle") in alias_index
+    assert ps.normalize_key("candidate_handle") not in alias_index
+
+
 def test_dry_run_cache_round_trip_and_invalidation(tmp_path) -> None:
     cache_file = tmp_path / "dry-run-cache.json"
     roots = [Path("/mnt/a"), Path("/mnt/b")]
