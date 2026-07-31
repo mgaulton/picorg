@@ -258,6 +258,24 @@ is retained as a backwards-compatible alias for labeled recall.
 
 This baseline is intentionally conservative: it prioritizes correct identity placement over forcing a guess on caption-only files, and it no longer lets bare generic words become identities. It is not production-ready for broad automatic sorting until the runbook thresholds are met.
 
+### Calibrate face confirmation thresholds
+
+Face clustering and identity confirmation use different operating points. Build
+a small local labelled-pair file, then calibrate a strict confirmation threshold
+from the cached embeddings:
+
+```bash
+.venv/bin/python face_match_benchmark.py \
+  --pairs /path/to/face-pairs.jsonl \
+  --embeddings /tmp/picorg_sorted_audit/20260731T170645Z.face-embeddings.json \
+  --max-fmr 0.001 \
+  --output /tmp/picorg-face-calibration.json
+```
+
+Use `selected.threshold` only for identity suggestions after review. Keep the
+face-cluster threshold broader for candidate discovery, and recalibrate when
+the embedding model, image population, or quality gates change.
+
 ## Reddit matching order
 
 1. Explicit `u/` or `r/` markers in the file path or name.
