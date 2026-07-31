@@ -136,7 +136,7 @@ python3 reverse_search_contact_sheet.py \
   --limit 40
 ```
 
-Launch the local candidate-cluster review UI (binds to loopback by default):
+Launch the candidate-cluster review UI (binds to all host interfaces for LAN access by default):
 
 ```bash
 python3 review_ui.py \
@@ -144,10 +144,14 @@ python3 review_ui.py \
   --decisions /opt/picorg/review_decisions.json
 ```
 
-Open `http://127.0.0.1:8787/`. The UI shows the top 2,000 unmatched clusters,
+Open `http://<picorg-host-ip>:8787/` from a LAN device. The UI shows the top 2,000 unmatched clusters,
 previews allowlisted local media, and records explicit assignments in
 `review_decisions.json`. It never moves files or edits the registry; promote
 reviewed decisions only after recording independent evidence.
+
+The service has no login layer, so keep port 8787 restricted to a trusted LAN or
+run with `--host 127.0.0.1` for local-only access. Do not expose it directly to
+the internet.
 
 Decisions support `pending`, `needs-evidence`, `confirmed`, and `rejected`.
 Only confirmed decisions can be promoted explicitly:

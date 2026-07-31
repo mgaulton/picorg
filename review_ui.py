@@ -28,6 +28,8 @@ MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".
 FAMILIES = {"manual", "metadaily", "reddit_follow", "reddit_subreddit", "pscrape", "review"}
 DECISION_STATUSES = {"pending", "confirmed", "rejected", "needs-evidence"}
 DEFAULT_REGISTRY = Path("/opt/picorg/project_registry.json")
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8787
 
 
 def latest_audit(audit_root: Path = DEFAULT_AUDIT_ROOT) -> Path:
@@ -296,8 +298,8 @@ def main() -> int:
     parser.add_argument("--decisions", type=Path, default=DEFAULT_DECISIONS)
     parser.add_argument("--export-registry", action="store_true", help="promote confirmed decisions into the registry")
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--host", default=DEFAULT_HOST, help="bind address; use 127.0.0.1 for local-only access")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
     if args.export_registry:
         print(f"promoted {export_confirmed_decisions(args.decisions, args.registry)} confirmed decisions")
