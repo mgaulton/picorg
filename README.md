@@ -203,7 +203,7 @@ Latest full audit (`20260731T170645Z`):
 - Scanned: 49,995
 - Matched: 1,303
 - Unmatched: 48,692
-- High confidence: 824
+- High confidence: 827
 - Labeled precision: 1.0
 - Labeled recall: 0.9195
 - Match coverage: 0.0261
