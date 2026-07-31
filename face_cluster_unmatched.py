@@ -15,6 +15,7 @@ import json
 import math
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
@@ -95,12 +96,18 @@ def extract_embeddings(
 
     records: List[Tuple[str, List[float]]] = []
     stats = {"selected": 0, "embedded": 0, "no_face": 0, "multi_face_deferred": 0, "low_quality": 0, "errors": 0}
-    for item in load_unmatched_paths(audit_path):
+    items = load_unmatched_paths(audit_path)
+    total = min(len(items), max_images) if max_images else len(items)
+    started = time.monotonic()
+    print(f"face extraction: starting {total} unmatched images", flush=True)
+    for item in items:
         if max_images and stats["selected"] >= max_images:
             break
         stats["selected"] += 1
         if stats["selected"] % 100 == 0:
-            print(f"face extraction: selected={stats['selected']} embedded={stats['embedded']}", flush=True)
+            elapsed = max(0.001, time.monotonic() - started)
+            rate = stats["selected"] / elapsed
+            print(f"face extraction: {stats['selected']}/{total} selected, embedded={stats['embedded']}, no_face={stats['no_face']}, rate={rate:.1f}/s", flush=True)
         path = Path(str(item["path"]))
         try:
             image = face_recognition.load_image_file(str(path))

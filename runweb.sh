@@ -18,6 +18,7 @@ if [[ ! -f "$AUDIT" ]]; then
     exit 2
 fi
 
+echo "[1/4] validating face-matching dependency"
 if ! .venv/bin/python -c 'import face_recognition' >/dev/null 2>&1; then
     if [[ "${INSTALL_FACE_DEPS:-0}" == "1" ]]; then
         .venv/bin/pip install -r requirements-face.txt
@@ -29,18 +30,19 @@ if ! .venv/bin/python -c 'import face_recognition' >/dev/null 2>&1; then
 fi
 
 if [[ ! -s "$FACE_AUDIT" || "${FORCE_FACE_REBUILD:-0}" == "1" ]]; then
-    echo "building face clusters from $AUDIT (this may take time for large collections)"
+    echo "[2/4] building face clusters from $AUDIT (large collections may take time)"
     .venv/bin/python face_cluster_unmatched.py \
         --audit "$AUDIT" \
         --output "$FACE_AUDIT"
 fi
 
-echo "reconciling name and face clusters"
+echo "[3/4] reconciling name and face clusters"
 .venv/bin/python reconcile_review_clusters.py \
     --name-audit "$AUDIT" \
     --face-audit "$FACE_AUDIT" \
     --output "$RECONCILED_AUDIT"
 
+echo "[4/4] starting LAN review UI at http://${HOST}:${PORT}/"
 exec .venv/bin/python review_ui.py \
     --audit "$RECONCILED_AUDIT" \
     --decisions "$DECISIONS" \
