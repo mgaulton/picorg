@@ -371,6 +371,24 @@ def test_short_manual_identity_matches_date_prefixed_filename(tmp_path, monkeypa
     assert rule == "date-prefix+lead-token"
 
 
+def test_specific_multiword_alias_matches_without_bare_name(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "mixedpics"
+    path = root / "Giada and Jade in black.jpg"
+    identity = ps.Identity("giada_de_laurentiis", "metadaily", ("Giada and Jade",))
+    alias_index = {ps.normalize_key(alias): {identity} for alias in ("giada_de_laurentiis", "Giada and Jade")}
+    token_index = {token: {identity} for token in ("giada", "jade")}
+    monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", set())
+    ps.build_identity_scoring_cache([identity])
+
+    matched, confidence, rule = best_identity_match(
+        path, root, [identity], alias_index, token_index
+    )
+
+    assert matched == identity
+    assert confidence >= 0.9
+    assert "alias" in rule
+
+
 def test_profile_image_hash_match_is_high_confidence_but_not_apply_confidence(tmp_path) -> None:
     root = tmp_path / "mixedpics"
     root.mkdir()
