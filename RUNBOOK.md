@@ -129,6 +129,8 @@ paths, SHA-256 hashes, and title hints. Any external reverse-image search must
 be manual and consent-aware; `FB IMG` and `RDT` entries are source-labeled,
 not discarded. Use `--per-gallery` to keep large download clusters diverse,
 and record independent corroboration before changing the verified profile registry.
+`reverse_search_contact_sheet.py` can render a bounded labeled sheet and skips
+corrupt files, making manual review faster without uploading media.
 - Any new aliases are verified before they are added to [`project_registry.json`](/opt/picorg/project_registry.json).
 - Precedence-sensitive identities still resolve to the intended canonical target.
 

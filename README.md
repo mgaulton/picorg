@@ -116,6 +116,15 @@ to `identity_profile_verification.json`. `FB IMG` and `RDT` are retained and
 marked as Facebook/Reddit download sources; `--per-gallery` keeps large source
 clusters from monopolizing review. The queue tool never uploads media.
 
+Create a labeled local review sheet, skipping corrupt files:
+
+```bash
+python3 reverse_search_contact_sheet.py \
+  /tmp/picorg_reverse_search_queue.json \
+  --output /tmp/picorg_reverse_search_contact_sheet.jpg \
+  --limit 40
+```
+
 Apply mode exists, but should be used only when the destination tree is writable and the audit output has been reviewed.
 
 For manual operator runs, use [`RUNBOOK.md`](/opt/picorg/RUNBOOK.md), [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md), and the wrapper script [`picorg_manual.sh`](/opt/picorg/picorg_manual.sh).
