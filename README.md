@@ -106,12 +106,15 @@ queue containing paths, hashes, and title hints:
 python3 reverse_search_queue.py \
   /tmp/picorg_sorted_audit/20260731T152301Z.json \
   --output /tmp/picorg_reverse_search_queue.json \
-  --limit 100
+  --limit 100 \
+  --per-gallery 3
 ```
 
 Use a permitted reverse-image provider manually, record candidate URLs and
 independent corroboration in the queue, and promote only confirmed identities
-to `identity_profile_verification.json`. The queue tool never uploads media.
+to `identity_profile_verification.json`. `FB IMG` and `RDT` are retained and
+marked as Facebook/Reddit download sources; `--per-gallery` keeps large source
+clusters from monopolizing review. The queue tool never uploads media.
 
 Apply mode exists, but should be used only when the destination tree is writable and the audit output has been reviewed.
 

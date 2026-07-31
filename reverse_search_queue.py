@@ -17,7 +17,7 @@ from picorg_sorter import gallery_base_title, title_from_path
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
-GENERIC_TITLE_TOKENS = {"img", "fb", "rdt", "good", "morning", "mommy", "goddess", "daddy", "sexy", "hot"}
+LOW_SIGNAL_TITLE_TOKENS = {"img", "fb", "rdt", "good", "morning", "mommy", "goddess", "daddy", "sexy", "hot"}
 
 
 def file_sha256(path: Path) -> str:
@@ -28,7 +28,7 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def queue_items(audit: Dict[str, object], limit: int) -> List[Dict[str, object]]:
+def queue_items(audit: Dict[str, object], limit: int, per_gallery: int) -> List[Dict[str, object]]:
     items: List[Dict[str, object]] = []
     seen_hashes = set()
     candidates: List[Dict[str, object]] = []
@@ -50,18 +50,25 @@ def queue_items(audit: Dict[str, object], limit: int) -> List[Dict[str, object]]
         title = str(result.get("title") or title_from_path(source))
         words = [word for word in title.lower().split() if word.isalpha()]
         title_key = gallery_base_title(title)
+        title_key_lower = title_key.lower()
+        source_label = None
+        if title_key_lower == "rdt":
+            source_label = "reddit_download"
+        elif title_key_lower == "fb img" or title_key_lower.startswith("fb img "):
+            source_label = "facebook_download"
         priority = gallery_counts.get(title_key, 1) * 10
         priority += min(len(words), 5) * 3
         priority += min(len(title), 80) // 20
-        priority -= sum(token in GENERIC_TITLE_TOKENS for token in words) * 8
-        meaningful_words = [word for word in words if word not in GENERIC_TITLE_TOKENS and len(word) >= 3]
+        priority -= sum(token in LOW_SIGNAL_TITLE_TOKENS for token in words) * 8
+        meaningful_words = [word for word in words if word not in LOW_SIGNAL_TITLE_TOKENS and len(word) >= 3]
         if not meaningful_words or all(word.isdigit() for word in meaningful_words):
-            priority -= 100000
+            priority -= 5000
         candidates.append(
             {
                 "path": str(source),
                 "title": title,
                 "gallery_key": gallery_base_title(title),
+                "source_label": source_label,
                 "priority": priority,
                 "source_root": result.get("source_root"),
                 "source_family": result.get("source_family"),
@@ -74,7 +81,12 @@ def queue_items(audit: Dict[str, object], limit: int) -> List[Dict[str, object]]
         )
     candidates.sort(key=lambda item: (-int(item["priority"]), str(item["path"])))
     hash_budget = max(limit * 5, limit)
+    selected_galleries = set()
+    gallery_counts_selected: Dict[str, int] = {}
     for candidate in candidates[:hash_budget]:
+        gallery_key = str(candidate["gallery_key"])
+        if gallery_counts_selected.get(gallery_key, 0) >= per_gallery:
+            continue
         source = Path(str(candidate["path"]))
         try:
             digest = file_sha256(source)
@@ -85,8 +97,27 @@ def queue_items(audit: Dict[str, object], limit: int) -> List[Dict[str, object]]
         seen_hashes.add(digest)
         candidate["sha256"] = digest
         items.append(candidate)
+        selected_galleries.add(gallery_key)
+        gallery_counts_selected[gallery_key] = gallery_counts_selected.get(gallery_key, 0) + 1
         if len(items) >= limit:
             break
+    if len(items) < limit:
+        for candidate in candidates[hash_budget:]:
+            gallery_key = str(candidate["gallery_key"])
+            if gallery_counts_selected.get(gallery_key, 0) >= per_gallery:
+                continue
+            try:
+                digest = file_sha256(Path(str(candidate["path"])))
+            except OSError:
+                continue
+            if digest in seen_hashes:
+                continue
+            seen_hashes.add(digest)
+            candidate["sha256"] = digest
+            items.append(candidate)
+            gallery_counts_selected[gallery_key] = gallery_counts_selected.get(gallery_key, 0) + 1
+            if len(items) >= limit:
+                break
     return items
 
 
@@ -95,6 +126,7 @@ def main() -> int:
     parser.add_argument("audit", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--per-gallery", type=int, default=3)
     args = parser.parse_args()
     payload = json.loads(args.audit.read_text(encoding="utf-8"))
     audit = payload.get("report", payload) if isinstance(payload, dict) else {}
@@ -102,6 +134,7 @@ def main() -> int:
     queue = queue_items(
         {"results": results, "gallery_sets": audit.get("gallery_sets", [])},
         max(0, args.limit),
+        max(1, args.per_gallery),
     )
     output = {
         "schema_version": 1,

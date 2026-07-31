@@ -126,8 +126,9 @@ of identity by themselves.
 
 For unmatched files, `reverse_search_queue.py` can export a bounded queue of
 paths, SHA-256 hashes, and title hints. Any external reverse-image search must
-be manual and consent-aware; record independent corroboration before changing
-the verified profile registry.
+be manual and consent-aware; `FB IMG` and `RDT` entries are source-labeled,
+not discarded. Use `--per-gallery` to keep large download clusters diverse,
+and record independent corroboration before changing the verified profile registry.
 - Any new aliases are verified before they are added to [`project_registry.json`](/opt/picorg/project_registry.json).
 - Precedence-sensitive identities still resolve to the intended canonical target.
 
