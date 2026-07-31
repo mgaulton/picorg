@@ -189,7 +189,16 @@ optional dependencies and generate a review audit:
   --output /tmp/picorg_sorted_audit/20260731T170645Z.face-clusters.json
 ```
 
-Open that face-cluster audit with the same UI. It is a similarity candidate
+For the complete name+face reconciled workflow, use `runweb.sh` after installing
+the optional dependency once:
+
+```bash
+INSTALL_FACE_DEPS=1 ./runweb.sh
+```
+
+Subsequent starts reuse the cached face audit. Set `FORCE_FACE_REBUILD=1` after
+changing the source audit. The script writes a reconciled audit and starts the
+LAN UI against it. It is a similarity candidate
 queue, not identity confirmation: multi-face/low-quality images are deferred,
 and no face result is exported automatically. Within a cluster, select several
 images and use “Assign selected to identity”; type a new identity and use “Save
