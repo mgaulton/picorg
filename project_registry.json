@@ -213,6 +213,30 @@
       "notes": "Validated from the repeated exact Sterre Meijer filename/title cluster; full phrase only."
     },
     {
+      "family": "manual",
+      "canonical": "alexa_hendricks",
+      "aliases": ["Alexa Hendricks"],
+      "notes": "Validated from the repeated exact Alexa Hendricks filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "cathy_kelley",
+      "aliases": ["Cathy Kelley"],
+      "notes": "Validated from the repeated exact Cathy Kelley filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "chloe_may",
+      "aliases": ["Chloe May"],
+      "notes": "Validated from the repeated exact Chloe May filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "elizabeth_olsen",
+      "aliases": ["Elizabeth Olsen"],
+      "notes": "Validated from the repeated exact Elizabeth Olsen filename/title cluster; full phrase only."
+    },
+    {
       "family": "pscrape",
       "canonical": "hannahowo",
       "aliases": ["Hannah Owo", "hannah owo"],

@@ -43,7 +43,7 @@ DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
 DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
-DEFAULT_RESOLVER_VERSION = "2026-07-31.18"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.20"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -55,7 +55,9 @@ IMDB_FILE = Path("/opt/list.imdburl")
 METADAILY_ACCOUNTS_FILE = Path("/opt/metadaily/social_accounts.txt")
 METADAILY_IDENTITY_ALIASES_FILE = Path("/opt/metadaily/data/identity_aliases.json")
 PROFILE_VERIFICATION_FILE = Path("/opt/picorg/identity_profile_verification.json")
-PROFILE_IMAGE_INDEX_FILE = Path("/opt/picorg/profile_image_index.json")
+PROFILE_IMAGE_INDEX_FILE = Path(
+    os.environ.get("PICORG_PROFILE_IMAGE_INDEX", "/opt/picorg/.profile_image_index.disabled")
+)
 PROJECT_REGISTRY_FILE = Path("/opt/picorg/project_registry.json")
 REDDITDAILY_ROOT = Path("/mnt/elements16a/Pron/redditdaily")
 PSCRAPE_ROOT = Path("/mnt/elements16a/Pron/pscrape")

@@ -101,7 +101,14 @@ and never changes files. A match is corroborating evidence only; it does not
 create an identity alias or authorize apply mode.
 When `profile_image_index.json` exists, picorg uses unique exact SHA-256
 reference hits at `0.99` confidence; ambiguous collisions remain unmatched.
-The index is local-only and excluded from Git.
+Enable it explicitly for a run with:
+
+```bash
+export PICORG_PROFILE_IMAGE_INDEX=/opt/picorg/profile_image_index.json
+```
+
+The index is local-only and excluded from Git; ordinary dry runs do not hash
+every unmatched file.
 
 For unmatched images that need external review, export a privacy-preserving
 queue containing paths, hashes, and title hints:
@@ -161,15 +168,15 @@ Production-ready runs should meet the same acceptance criteria described in [`RU
 
 ## Dry-run baseline
 
-Latest full audit (`20260731T151913Z`):
+Latest full audit (`20260731T160325Z`):
 
 - Scanned: 49,995
-- Matched: 1,157
-- Unmatched: 48,838
-- High confidence: 689
+- Matched: 1,190
+- Unmatched: 48,805
+- High confidence: 722
 - Labeled precision: 1.0
-- Labeled recall: 0.7335
-- Match coverage: 0.0231
+- Labeled recall: 0.7375
+- Match coverage: 0.0238
 
 The audit also reports labeled precision (correct predictions / predictions), labeled recall
 (correct predictions / labeled cases), and coverage by intake source. `ground_truth_accuracy`
