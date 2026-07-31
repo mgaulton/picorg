@@ -153,6 +153,12 @@
       "notes": "Validated from the exact Mckenna Grace filename/title cluster; full phrase only."
     },
     {
+      "family": "metadaily",
+      "canonical": "ms_francescacapaldi",
+      "aliases": ["Francesca Capaldi", "FrancescaCapaldi"],
+      "notes": "Validated against /opt/metadaily/data/identity_aliases.json and local ms_francescacapaldi source evidence."
+    },
+    {
       "family": "pscrape",
       "canonical": "hannahowo",
       "aliases": ["Hannah Owo", "hannah owo"],

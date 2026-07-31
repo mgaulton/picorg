@@ -107,15 +107,15 @@ Production-ready runs should meet the same acceptance criteria described in [`RU
 
 ## Dry-run baseline
 
-Latest full audit (`20260731T150809Z`):
+Latest full audit (`20260731T151103Z`):
 
 - Scanned: 49,995
-- Matched: 1,042
-- Unmatched: 48,953
+- Matched: 1,062
+- Unmatched: 48,933
 - High confidence: 594
 - Labeled precision: 1.0
-- Labeled recall: 0.7219
-- Match coverage: 0.0208
+- Labeled recall: 0.7236
+- Match coverage: 0.0212
 
 The audit also reports labeled precision (correct predictions / predictions), labeled recall
 (correct predictions / labeled cases), and coverage by intake source. `ground_truth_accuracy`
