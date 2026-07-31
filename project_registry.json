@@ -63,6 +63,96 @@
   },
   "entries": [
     {
+      "family": "manual",
+      "canonical": "lara_loft",
+      "aliases": ["Lara Loft"],
+      "notes": "Validated from repeated exact Lara Loft filename/title clusters; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "sandra_hunke",
+      "aliases": ["Sandra Hunke"],
+      "notes": "Validated from repeated exact Sandra Hunke filename/title clusters; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "leoobalys",
+      "aliases": ["Leoobalys"],
+      "notes": "Validated from repeated exact Leoobalys filename/title clusters."
+    },
+    {
+      "family": "manual",
+      "canonical": "kajamood",
+      "aliases": ["Kajamood"],
+      "notes": "Validated from the exact Kajamood filename/title cluster and local Reddit friend evidence."
+    },
+    {
+      "family": "manual",
+      "canonical": "brett_cooper",
+      "aliases": ["Brett Cooper"],
+      "notes": "Validated from repeated exact Brett Cooper filename/title clusters and BrettCooperSFW source evidence."
+    },
+    {
+      "family": "manual",
+      "canonical": "tara_yummy",
+      "aliases": ["Tara Yummy"],
+      "notes": "Validated from repeated exact Tara Yummy filename/title clusters; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "jameliz",
+      "aliases": ["Jameliz"],
+      "notes": "Validated from repeated exact Jameliz filename/title clusters and local source evidence."
+    },
+    {
+      "family": "manual",
+      "canonical": "leanna_decker",
+      "aliases": ["Leanna Decker"],
+      "notes": "Validated from repeated exact Leanna Decker filename/title clusters; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "nadine_breauty",
+      "aliases": ["Nadine Breauty"],
+      "notes": "Validated from the exact Nadine Breauty filename/title cluster."
+    },
+    {
+      "family": "manual",
+      "canonical": "nika_sofie",
+      "aliases": ["Nika Sofie"],
+      "notes": "Validated from the exact Nika Sofie filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "honeypuu",
+      "aliases": ["HoneyPuu"],
+      "notes": "Validated from the exact HoneyPuu filename/title cluster."
+    },
+    {
+      "family": "manual",
+      "canonical": "angelina_michelle",
+      "aliases": ["Angelina Michelle"],
+      "notes": "Validated from the exact Angelina Michelle filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "scarlet_chase",
+      "aliases": ["Scarlet Chase"],
+      "notes": "Validated from the exact Scarlet Chase filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "larkin_love",
+      "aliases": ["Larkin Love"],
+      "notes": "Validated from the exact Larkin Love filename/title cluster and local Reddit friend evidence."
+    },
+    {
+      "family": "manual",
+      "canonical": "mckenna_grace",
+      "aliases": ["Mckenna Grace"],
+      "notes": "Validated from the exact Mckenna Grace filename/title cluster; full phrase only."
+    },
+    {
       "family": "pscrape",
       "canonical": "hannahowo",
       "aliases": ["Hannah Owo", "hannah owo"],

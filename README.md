@@ -107,17 +107,21 @@ Production-ready runs should meet the same acceptance criteria described in [`RU
 
 ## Dry-run baseline
 
-- Scanned: 3877
-- Matched: 2563
-- Unmatched: 1314
-- High confidence: 2468
-- Proxy ground-truth accuracy: 0.9979
+Latest full audit (`20260731T150159Z`):
+
+- Scanned: 49,995
+- Matched: 1,022
+- Unmatched: 48,973
+- High confidence: 574
+- Labeled precision: 1.0
+- Labeled recall: 0.6594
+- Match coverage: 0.0204
 
 The audit also reports labeled precision (correct predictions / predictions), labeled recall
 (correct predictions / labeled cases), and coverage by intake source. `ground_truth_accuracy`
 is retained as a backwards-compatible alias for labeled recall.
 
-This baseline is intentionally conservative: it prioritizes correct identity placement over forcing a guess on caption-only files, and it no longer lets bare generic words become identities.
+This baseline is intentionally conservative: it prioritizes correct identity placement over forcing a guess on caption-only files, and it no longer lets bare generic words become identities. It is not production-ready for broad automatic sorting until the runbook thresholds are met.
 
 ## Reddit matching order
 
