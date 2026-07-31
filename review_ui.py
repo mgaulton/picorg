@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from flask import Flask, g, jsonify, request, send_file
+from werkzeug.exceptions import HTTPException
 
 import picorg_sorter as sorter
 
@@ -249,6 +250,12 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
     def request_too_large(_error):
         return jsonify({"error": "request body is too large", "request_id": g.request_id}), 413
 
+    @app.errorhandler(HTTPException)
+    def handle_http_error(error: HTTPException):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": error.description, "request_id": g.request_id}), error.code
+        return error
+
     @app.errorhandler(Exception)
     def handle_unexpected(error):
         LOGGER.exception("request failed request_id=%s path=%s", g.request_id, request.path, exc_info=error)
@@ -259,6 +266,10 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
     @app.get("/")
     def index():
         return HTML_PAGE
+
+    @app.get("/favicon.ico")
+    def favicon():
+        return "", 204
 
     @app.get("/healthz")
     def healthz():

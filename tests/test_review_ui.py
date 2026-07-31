@@ -37,6 +37,8 @@ def test_decision_is_saved_and_media_is_allowlisted(tmp_path):
     health = client.get("/healthz")
     assert health.status_code == 200
     assert health.headers["X-Content-Type-Options"] == "nosniff"
+    assert client.get("/favicon.ico").status_code == 204
+    assert client.get("/missing-page").status_code == 404
     summary = client.get("/api/summary").get_json()
     assert "gallery_sets" not in summary["report"]
     cluster = client.get("/api/clusters").get_json()["clusters"][0]
