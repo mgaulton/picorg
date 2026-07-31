@@ -113,9 +113,7 @@ def extract_embeddings(
     if cache_path and cache_path.is_file():
         try:
             cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
-            audit_stat = audit_path.stat()
-            if cached_payload.get("audit") == {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}:
-                cached_records = cached_payload.get("records", {})
+            cached_records = cached_payload.get("records", {})
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             cached_records = {}
     started = time.monotonic()
