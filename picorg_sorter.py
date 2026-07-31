@@ -43,7 +43,7 @@ DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
 DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
-DEFAULT_RESOLVER_VERSION = "2026-07-31.17"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.18"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -55,6 +55,7 @@ IMDB_FILE = Path("/opt/list.imdburl")
 METADAILY_ACCOUNTS_FILE = Path("/opt/metadaily/social_accounts.txt")
 METADAILY_IDENTITY_ALIASES_FILE = Path("/opt/metadaily/data/identity_aliases.json")
 PROFILE_VERIFICATION_FILE = Path("/opt/picorg/identity_profile_verification.json")
+PROFILE_IMAGE_INDEX_FILE = Path("/opt/picorg/profile_image_index.json")
 PROJECT_REGISTRY_FILE = Path("/opt/picorg/project_registry.json")
 REDDITDAILY_ROOT = Path("/mnt/elements16a/Pron/redditdaily")
 PSCRAPE_ROOT = Path("/mnt/elements16a/Pron/pscrape")
@@ -282,6 +283,7 @@ def catalog_source_state() -> Dict[str, object]:
         METADAILY_ACCOUNTS_FILE,
         METADAILY_IDENTITY_ALIASES_FILE,
         PROFILE_VERIFICATION_FILE,
+        PROFILE_IMAGE_INDEX_FILE,
     ]
     files.extend(STRONG_TEXT_SOURCE_FILES)
     files.extend(WEAK_TEXT_SOURCE_FILES)
@@ -1010,6 +1012,26 @@ def file_hash(path: Path) -> str:
     return file_sha256(path)
 
 
+def load_profile_image_index() -> Dict[str, Set[Tuple[str, str]]]:
+    if not PROFILE_IMAGE_INDEX_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(PROFILE_IMAGE_INDEX_FILE.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    index: Dict[str, Set[Tuple[str, str]]] = defaultdict(set)
+    for item in payload.get("references", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("sha256") or "").strip().lower()
+        identity = str(item.get("identity") or "").strip()
+        if digest and "__" in identity:
+            family, canonical = identity.split("__", 1)
+            if family and canonical:
+                index[digest].add((family, canonical))
+    return dict(index)
+
+
 def _read_reddit_sidecar(path: Path) -> Dict[str, List[str]]:
     """Read adjacent downloader metadata without network access or mutation."""
     values = {"metadata_users": [], "metadata_subreddits": [], "metadata_context": [], "reddit_post_ids": []}
@@ -1167,6 +1189,7 @@ def best_identity_match(
     preferred_alias_targets: Optional[Dict[str, str]] = None,
     match_cache: Optional[Dict[str, Tuple[Optional[Identity], float, str]]] = None,
     ocr_text: Optional[str] = None,
+    profile_image_index: Optional[Dict[str, Set[Tuple[str, str]]]] = None,
 ) -> Tuple[Optional[Identity], float, str]:
     pieces = []
     rel = path.relative_to(root)
@@ -1194,6 +1217,15 @@ def best_identity_match(
             return cached
     best: Tuple[Optional[Identity], float, str] = (None, 0.0, "unmatched")
     candidate_identities: Set[Identity] = set()
+
+    if profile_image_index:
+        try:
+            image_hits = profile_image_index.get(file_sha256(path), set())
+        except OSError:
+            image_hits = set()
+        if len(image_hits) == 1:
+            family, canonical = next(iter(image_hits))
+            return Identity(canonical, family, ()), 0.99, "profile-image-sha256"
 
     def consider(identity: Identity, confidence: float, rule: str) -> None:
         nonlocal best
@@ -1474,8 +1506,41 @@ def make_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def apply_gallery_consensus(results: List[MatchResult]) -> int:
+    """Propagate only unanimous high-confidence identity evidence within a gallery."""
+    groups: Dict[str, List[MatchResult]] = defaultdict(list)
+    for result in results:
+        title = result.title or ""
+        key = normalize_key(gallery_base_title(title))
+        if key:
+            groups[key].append(result)
+
+    propagated = 0
+    for group in groups.values():
+        matched = [
+            result for result in group
+            if result.family and result.canonical and result.confidence >= 0.95
+        ]
+        identities = Counter((result.family, result.canonical) for result in matched)
+        if len(identities) != 1:
+            continue
+        (family, canonical), count = identities.most_common(1)[0]
+        if count < 2:
+            continue
+        for result in group:
+            if result.canonical:
+                continue
+            result.family = family
+            result.canonical = canonical
+            result.confidence = 0.9
+            result.rule = f"gallery-consensus:{canonical}"
+            propagated += 1
+    return propagated
+
+
 def run_dry(root_paths: Sequence[Path], apply: bool = False) -> Tuple[List[MatchResult], Dict[str, object]]:
     catalog, alias_index, canonical_index, token_index, preferred_alias_targets = load_identity_catalog()
+    profile_image_index = load_profile_image_index()
     ocr_enabled_flag = ocr_enabled()
     cache_state = dry_run_state(root_paths, ocr_enabled_flag)
     cache_file = dry_run_cache_path()
@@ -1572,6 +1637,7 @@ def run_dry(root_paths: Sequence[Path], apply: bool = False) -> Tuple[List[Match
                 token_index,
                 preferred_alias_targets=preferred_alias_targets,
                 match_cache=match_cache,
+                profile_image_index=profile_image_index,
             )
             ocr_text = None
             if ocr_enabled_flag and (not identity or confidence < DEFAULT_OCR_TRIGGER_CONFIDENCE):
@@ -1586,6 +1652,7 @@ def run_dry(root_paths: Sequence[Path], apply: bool = False) -> Tuple[List[Match
                         token_index,
                         preferred_alias_targets=preferred_alias_targets,
                         match_cache=match_cache,
+                        profile_image_index=profile_image_index,
                         ocr_text=ocr_text,
                     )
                     if ocr_identity:
@@ -1643,6 +1710,36 @@ def run_dry(root_paths: Sequence[Path], apply: bool = False) -> Tuple[List[Match
                 if identity:
                     root_ground_truth_predicted += 1
                     if normalize_key(identity.canonical) == normalize_key(expected):
+                        root_ground_truth_correct += 1
+                    else:
+                        root_ground_truth_false_positive += 1
+        apply_gallery_consensus(results[root_start:])
+        root_results = results[root_start:]
+        root_metrics = Counter()
+        root_confidence_buckets = Counter()
+        root_family_hits = Counter()
+        root_ground_truth_total = 0
+        root_ground_truth_correct = 0
+        root_ground_truth_predicted = 0
+        root_ground_truth_false_positive = 0
+        for result in root_results:
+            if result.canonical:
+                root_metrics["matched"] += 1
+                root_family_hits[result.family] += 1
+                if result.confidence >= 0.95:
+                    root_metrics["high_confidence"] += 1
+                elif result.confidence >= 0.80:
+                    root_metrics["medium_confidence"] += 1
+                else:
+                    root_metrics["low_confidence"] += 1
+                root_confidence_buckets[f"{int(result.confidence * 10) / 10:.1f}"] += 1
+            else:
+                root_metrics["unmatched"] += 1
+            if result.expected_available:
+                root_ground_truth_total += 1
+                if result.canonical:
+                    root_ground_truth_predicted += 1
+                    if normalize_key(result.canonical) == normalize_key(result.expected_identity):
                         root_ground_truth_correct += 1
                     else:
                         root_ground_truth_false_positive += 1

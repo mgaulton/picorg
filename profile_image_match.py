@@ -61,6 +61,7 @@ def main() -> int:
     parser.add_argument("--references", type=Path, required=True)
     parser.add_argument("--root", action="append", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--index-output", type=Path, help="Optional exact-hash index for picorg")
     args = parser.parse_args()
     if shutil.which("magick") is None:
         parser.error("ImageMagick 'magick' is required for normalized image fingerprints")
@@ -108,6 +109,15 @@ def main() -> int:
         "failures": failures,
         "results": matches,
     }
+    if args.index_output:
+        index_records = []
+        for entries in references.values():
+            index_records.extend(entries)
+        args.index_output.parent.mkdir(parents=True, exist_ok=True)
+        args.index_output.write_text(
+            json.dumps({"schema_version": 1, "references": index_records}, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps({key: payload[key] for key in ("references", "scanned", "matches", "failures")}))

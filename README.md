@@ -92,12 +92,16 @@ reporter:
 python3 profile_image_match.py \
   --references /tmp/photo_reorg_social_references \
   --root /mnt/elements16/@mixedpics \
-  --output /tmp/picorg_profile_image_matches.json
+  --output /tmp/picorg_profile_image_matches.json \
+  --index-output /opt/picorg/profile_image_index.json
 ```
 
 This uses ImageMagick-normalized image fingerprints, never contacts websites,
 and never changes files. A match is corroborating evidence only; it does not
 create an identity alias or authorize apply mode.
+When `profile_image_index.json` exists, picorg uses unique exact SHA-256
+reference hits at `0.99` confidence; ambiguous collisions remain unmatched.
+The index is local-only and excluded from Git.
 
 For unmatched images that need external review, export a privacy-preserving
 queue containing paths, hashes, and title hints:

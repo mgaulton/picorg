@@ -13,6 +13,7 @@ from picorg_sorter import (
     extract_downloader_hints,
     extract_reddit_context,
     gallery_base_title,
+    apply_gallery_consensus,
     load_dry_run_cache,
     write_dry_run_cache,
     match_cache_signature,
@@ -48,6 +49,27 @@ def test_gallery_summary_groups_numeric_suffix_series_together() -> None:
     assert len(summary) == 1
     assert summary[0]["base_title"] == "Scene"
     assert summary[0]["count"] == 2
+
+
+def test_gallery_consensus_requires_two_unanimous_high_confidence_matches() -> None:
+    results = [
+        make_result("/mnt/desktop/Set (1).jpg", "Set (1)"),
+        make_result("/mnt/desktop/Set (2).jpg", "Set (2)"),
+        MatchResult(
+            path="/mnt/desktop/Set (3).jpg",
+            source_root="/mnt/desktop",
+            family=None,
+            canonical=None,
+            confidence=0.0,
+            rule="unmatched",
+            title="Set (3)",
+        ),
+    ]
+
+    assert apply_gallery_consensus(results) == 1
+    assert results[2].canonical == "example"
+    assert results[2].confidence == 0.9
+    assert results[2].rule == "gallery-consensus:example"
 
 
 def test_load_identity_catalog_uses_directory_entries_without_files(tmp_path, monkeypatch) -> None:
@@ -302,3 +324,24 @@ def test_short_manual_alias_matches_exact_gallery_title(tmp_path, monkeypatch) -
     assert matched == identity
     assert confidence == 1.0
     assert rule == "exact:jameliz"
+
+
+def test_profile_image_hash_match_is_high_confidence_but_not_apply_confidence(tmp_path) -> None:
+    root = tmp_path / "mixedpics"
+    root.mkdir()
+    path = root / "opaque-download.jpg"
+    path.write_bytes(b"reference-image-bytes")
+    digest = ps.file_sha256(path)
+
+    matched, confidence, rule = best_identity_match(
+        path,
+        root,
+        [],
+        {},
+        {},
+        profile_image_index={digest: {("manual", "known_person")}},
+    )
+
+    assert matched == ps.Identity("known_person", "manual", ())
+    assert confidence == 0.99
+    assert rule == "profile-image-sha256"

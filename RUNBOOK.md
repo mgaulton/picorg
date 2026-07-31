@@ -123,6 +123,9 @@ local reference tree and review its JSON report. It uses normalized image
 fingerprints only, never fetches URLs, and never authorizes apply mode. Exact or
 near-identical reference hits are corroboration for a human review, not proof
 of identity by themselves.
+Passing `--index-output /opt/picorg/profile_image_index.json` additionally
+enables unique exact-reference SHA-256 matches in picorg; delete or rotate the
+local index when its source references change.
 
 For unmatched files, `reverse_search_queue.py` can export a bounded queue of
 paths, SHA-256 hashes, and title hints. Any external reverse-image search must
