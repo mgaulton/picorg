@@ -197,8 +197,9 @@ INSTALL_FACE_DEPS=1 ./runweb.sh
 ```
 
 Subsequent starts reuse the cached face audit. Set `FORCE_FACE_REBUILD=1` after
-changing the source audit. The script writes a reconciled audit and starts the
-LAN UI against it. It is a similarity candidate
+changing the source audit. Face embeddings are checkpointed every 500 images in
+`*.face-embeddings.json`; stopping and rerunning resumes completed work. The
+script writes a reconciled audit and starts the LAN UI against it. It is a similarity candidate
 queue, not identity confirmation: multi-face/low-quality images are deferred,
 and no face result is exported automatically. Within a cluster, select several
 images and use “Assign selected to identity”; type a new identity and use “Save

@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 AUDIT="${AUDIT:-/tmp/picorg_sorted_audit/20260731T170645Z.json}"
 FACE_AUDIT="${FACE_AUDIT:-${AUDIT%.json}.face-clusters.json}"
+FACE_CACHE="${FACE_CACHE:-${AUDIT%.json}.face-embeddings.json}"
 RECONCILED_AUDIT="${RECONCILED_AUDIT:-${AUDIT%.json}.reconciled.json}"
 DECISIONS="${DECISIONS:-$ROOT_DIR/review_decisions.json}"
 IMAGE_DECISIONS="${IMAGE_DECISIONS:-$ROOT_DIR/review_image_decisions.json}"
@@ -31,9 +32,13 @@ fi
 
 if [[ ! -s "$FACE_AUDIT" || "${FORCE_FACE_REBUILD:-0}" == "1" ]]; then
     echo "[2/4] building face clusters from $AUDIT (large collections may take time)"
+    if [[ "${FORCE_FACE_REBUILD:-0}" == "1" ]]; then
+        rm -f -- "$FACE_AUDIT" "$FACE_CACHE"
+    fi
     .venv/bin/python face_cluster_unmatched.py \
         --audit "$AUDIT" \
-        --output "$FACE_AUDIT"
+        --output "$FACE_AUDIT" \
+        --cache "$FACE_CACHE"
 fi
 
 echo "[3/4] reconciling name and face clusters"
