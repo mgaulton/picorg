@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hashlib
 import json
 import math
 import os
@@ -22,6 +23,14 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 DEFAULT_THRESHOLD = 0.48
 DEFAULT_MIN_FACE_PIXELS = 80
 DEFAULT_MIN_FACE_AREA_RATIO = 0.01
+
+
+def file_fingerprint(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_unmatched_paths(audit_path: Path) -> List[Dict[str, Any]]:
@@ -106,7 +115,7 @@ def extract_embeddings(
             cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
             audit_stat = audit_path.stat()
             if cached_payload.get("audit") == {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}:
-                cached_records = {str(path): [float(value) for value in vector] for path, vector in cached_payload.get("records", {}).items()}
+                cached_records = cached_payload.get("records", {})
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             cached_records = {}
     started = time.monotonic()
@@ -116,10 +125,16 @@ def extract_embeddings(
             break
         stats["selected"] += 1
         path = Path(str(item["path"]))
-        if str(path) in cached_records:
-            records.append((str(path), cached_records[str(path)]))
-            stats["cached"] += 1
-            stats["embedded"] += 1
+        try:
+            fingerprint = file_fingerprint(path)
+            cached = cached_records.get(str(path))
+            if isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
+                records.append((str(path), [float(value) for value in cached["embedding"]]))
+                stats["cached"] += 1
+                stats["embedded"] += 1
+                continue
+        except OSError:
+            stats["errors"] += 1
             continue
         if stats["selected"] % 100 == 0:
             elapsed = max(0.001, time.monotonic() - started)
@@ -144,7 +159,7 @@ def extract_embeddings(
             if encodings:
                 vector = [float(value) for value in encodings[0]]
                 records.append((str(path), vector))
-                cached_records[str(path)] = vector
+                cached_records[str(path)] = {"fingerprint": fingerprint, "embedding": vector}
                 stats["embedded"] += 1
         except Exception:
             stats["errors"] += 1
