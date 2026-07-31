@@ -1,4 +1,40 @@
 {
   "schema_version": 1,
-  "identities": []
+  "identities": [
+    {
+      "canonical": "sadiesink",
+      "status": "confirmed",
+      "checked": "2026-07-31",
+      "profiles": [
+        {
+          "platform": "instagram",
+          "handle": "sadiesink_",
+          "canonical_url": "https://www.instagram.com/sadiesink_/"
+        },
+        {
+          "platform": "x",
+          "handle": "SadieSink",
+          "canonical_url": "https://x.com/SadieSink"
+        }
+      ],
+      "evidence": [
+        {
+          "tier": 2,
+          "url": "https://www.capitalfm.com/news/tv-film/sadie-sink/instagram/",
+          "notes": "Independent profile identifies the Instagram and X handles."
+        },
+        {
+          "tier": 2,
+          "url": "https://peopleinmedia.org/en/name/sadie-sink/",
+          "notes": "Independent profile listing corroborates the social-profile candidates."
+        },
+        {
+          "tier": 1,
+          "url": "https://www.instagram.com/sadiesink_/",
+          "notes": "Direct public profile recorded by the verification runbook."
+        }
+      ],
+      "notes": "Imported from the corroborated Sadie Sink example in IDENTITY_PROFILE_VERIFICATION.md; Reddit sources remain monitoring evidence only."
+    }
+  ]
 }
