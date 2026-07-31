@@ -237,6 +237,42 @@
       "notes": "Validated from the repeated exact Elizabeth Olsen filename/title cluster; full phrase only."
     },
     {
+      "family": "manual",
+      "canonical": "leonie_busse",
+      "aliases": ["Leonie Busse"],
+      "notes": "Validated from the repeated exact Leonie Busse filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "hannah_stein",
+      "aliases": ["Hannah Stein"],
+      "notes": "Validated from the repeated exact Hannah Stein filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "harley_haisley",
+      "aliases": ["Harley Haisley"],
+      "notes": "Validated from the repeated exact Harley Haisley filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "jenna_lynn_meowri",
+      "aliases": ["Jenna Lynn Meowri"],
+      "notes": "Validated from the repeated exact Jenna Lynn Meowri filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "sarah_gibson",
+      "aliases": ["Sarah Gibson"],
+      "notes": "Validated from the repeated exact Sarah Gibson filename/title cluster; full phrase only."
+    },
+    {
+      "family": "manual",
+      "canonical": "mina_starsiak",
+      "aliases": ["Mina Starsiak"],
+      "notes": "Validated from the repeated exact Mina Starsiak filename/title cluster; full phrase only."
+    },
+    {
       "family": "pscrape",
       "canonical": "hannahowo",
       "aliases": ["Hannah Owo", "hannah owo"],
