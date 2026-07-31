@@ -60,6 +60,12 @@ def test_decision_is_saved_and_media_is_allowlisted(tmp_path):
     assert json.loads(decisions.read_text())["decisions"][0]["status"] == "confirmed"
     oversized = client.post("/api/decisions", data="x" * 70000, content_type="application/json")
     assert oversized.status_code == 413
+    image_path = review_ui.build_clusters(json.loads(audit.read_text()))[0]["paths"][0]
+    assert client.post("/api/identities", json={"canonical": "new_creator"}).status_code == 201
+    image_assignment = client.post("/api/image-decisions", json={"paths": [image_path], "identity": "new_creator", "family": "review"})
+    assert image_assignment.status_code == 201
+    detail = client.get(f"/api/clusters/{cluster['cluster_id']}").get_json()
+    assert detail["image_decisions"][image_path]["identity"] == "new_creator"
 
 
 def test_export_promotes_confirmed_only(tmp_path):

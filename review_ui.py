@@ -30,6 +30,8 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
 DEFAULT_DECISIONS = Path("/opt/picorg/review_decisions.json")
+DEFAULT_IMAGE_DECISIONS = Path("/opt/picorg/review_image_decisions.json")
+DEFAULT_REVIEW_IDENTITIES = Path("/opt/picorg/review_identities.json")
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".mov"}
 FAMILIES = {"manual", "metadaily", "reddit_follow", "reddit_subreddit", "pscrape", "review"}
 DECISION_STATUSES = {"pending", "confirmed", "rejected", "needs-evidence"}
@@ -158,6 +160,19 @@ def _read_decisions(path: Path) -> Dict[str, Dict[str, Any]]:
     return {str(item["cluster_id"]): item for item in decisions if isinstance(item, dict) and item.get("cluster_id")}
 
 
+def _read_image_decisions(path: Path) -> Dict[str, Dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    decisions = payload.get("decisions", []) if isinstance(payload, dict) else []
+    return {str(item["key"]): item for item in decisions if isinstance(item, dict) and item.get("key")}
+
+
+def _image_decision_key(path: str) -> str:
+    return f"image:{hashlib.sha256(path.encode('utf-8')).hexdigest()[:24]}"
+
+
 def _write_decisions(path: Path, decisions: Dict[str, Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"schema_version": 1, "updated": datetime.now(timezone.utc).isoformat(), "decisions": list(decisions.values())}
@@ -170,6 +185,10 @@ def _write_decisions(path: Path, decisions: Dict[str, Dict[str, Any]]) -> None:
     finally:
         if os.path.exists(temp_name):
             os.unlink(temp_name)
+
+
+def _write_image_decisions(path: Path, decisions: Dict[str, Dict[str, Any]]) -> None:
+    _atomic_json_write(path, {"schema_version": 1, "updated": datetime.now(timezone.utc).isoformat(), "decisions": list(decisions.values())})
 
 
 def export_confirmed_decisions(decisions_path: Path, registry_path: Path = DEFAULT_REGISTRY) -> int:
@@ -219,13 +238,21 @@ def _public_cluster(cluster: Dict[str, Any], decision: Optional[Dict[str, Any]] 
     return result
 
 
-def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overrides_path: Path = DEFAULT_OVERRIDES) -> Flask:
+def create_app(
+    audit_path: Path,
+    decisions_path: Path = DEFAULT_DECISIONS,
+    overrides_path: Path = DEFAULT_OVERRIDES,
+    image_decisions_path: Path = DEFAULT_IMAGE_DECISIONS,
+    review_identities_path: Path = DEFAULT_REVIEW_IDENTITIES,
+) -> Flask:
     payload = load_audit(audit_path)
     clusters = load_cluster_index(audit_path)
     known_paths = {path for cluster in clusters for path in cluster.get("paths", [])}
     _apply_overrides(clusters, _read_overrides(overrides_path))
     by_id = {cluster["cluster_id"]: cluster for cluster in clusters}
     decisions = _read_decisions(decisions_path)
+    image_decisions = _read_image_decisions(image_decisions_path)
+    review_identities = _read_decisions(review_identities_path)
     allowed_roots = {Path(path).resolve() for cluster in clusters for path in cluster["source_roots"] if path}
 
     app = Flask(__name__)
@@ -310,6 +337,7 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
             return jsonify({"error": "unknown cluster"}), 404
         result = _public_cluster(cluster, decisions.get(cluster_id))
         result["paths"] = cluster["paths"]
+        result["image_decisions"] = {path: image_decisions[_image_decision_key(path)] for path in cluster["paths"] if _image_decision_key(path) in image_decisions}
         return jsonify(result)
 
     @app.post("/api/clusters/<cluster_id>/members")
@@ -343,7 +371,47 @@ def create_app(audit_path: Path, decisions_path: Path = DEFAULT_DECISIONS, overr
     @app.get("/api/identities")
     def identities():
         catalog, _, _, _, _ = sorter.load_identity_catalog()
-        return jsonify([{"canonical": item.canonical, "family": item.family} for item in catalog])
+        result = [{"canonical": item.canonical, "family": item.family} for item in catalog]
+        result.extend({"canonical": item.get("identity"), "family": item.get("family", "review"), "source": "review"} for item in review_identities.values())
+        return jsonify(result)
+
+    @app.post("/api/identities")
+    def create_review_identity():
+        body = request.get_json(silent=True) or {}
+        canonical = str(body.get("canonical") or body.get("identity") or "").strip()
+        family = str(body.get("family") or "review").strip()
+        if not canonical or len(canonical) > 120 or any(char in canonical for char in "\r\n"):
+            return jsonify({"error": "canonical identity is required and must be one line"}), 400
+        if family not in FAMILIES:
+            return jsonify({"error": "invalid family"}), 400
+        record = {"cluster_id": canonical, "identity": canonical, "family": family, "notes": str(body.get("notes") or "").strip()[:1000], "saved_at": datetime.now(timezone.utc).isoformat()}
+        with write_lock:
+            review_identities[canonical] = record
+            _write_decisions(review_identities_path, review_identities)
+        return jsonify(record), 201
+
+    @app.post("/api/image-decisions")
+    def save_image_decisions():
+        body = request.get_json(silent=True) or {}
+        paths = list(dict.fromkeys(str(path) for path in body.get("paths", []) if str(path)))
+        identity = str(body.get("identity") or "").strip()
+        family = str(body.get("family") or "review").strip()
+        status = str(body.get("status") or "pending").strip()
+        if not paths or len(paths) > 200:
+            return jsonify({"error": "paths must contain 1 to 200 images"}), 400
+        if any(path not in known_paths for path in paths):
+            return jsonify({"error": "one or more paths are not in the audit index"}), 404
+        if not identity or len(identity) > 120 or any(char in identity for char in "\r\n"):
+            return jsonify({"error": "identity is required and must be one line"}), 400
+        if family not in FAMILIES or status not in DECISION_STATUSES:
+            return jsonify({"error": "family or status is invalid"}), 400
+        saved_at = datetime.now(timezone.utc).isoformat()
+        with write_lock:
+            for path in paths:
+                key = _image_decision_key(path)
+                image_decisions[key] = {"key": key, "scope": "image", "path": path, "identity": identity, "family": family, "status": status, "notes": str(body.get("notes") or "").strip()[:1000], "saved_at": saved_at}
+            _write_image_decisions(image_decisions_path, image_decisions)
+        return jsonify({"saved": len(paths), "identity": identity, "paths": paths}), 201
 
     @app.get("/api/decisions")
     def list_decisions():
@@ -456,8 +524,15 @@ const statusObserver=new MutationObserver(()=>{let form=document.querySelector('
 statusObserver.observe(document.querySelector('#detail'),{childList:true});
 const memberObserver=new MutationObserver(()=>{let grid=document.querySelector('#detail .grid');if(!grid||document.querySelector('#memberTools'))return;let tools=document.createElement('div');tools.id='memberTools';tools.className='meta';tools.innerHTML='<b>Cluster membership</b><br><select id="targetCluster">'+clusters.map(c=>'<option value="'+c.cluster_id+'">'+esc(c.title)+' ('+c.count+')</option>').join('')+'</select><button onclick="updateMember(\'add\')">Move selected image</button><button onclick="updateMember(\'remove\')">Remove selected image</button><p class="muted">Click an image first, then use these controls.</p>';document.querySelector('#detail').insertBefore(tools,grid);grid.querySelectorAll('a').forEach(a=>a.onclick=()=>{window.memberPath=new URL(a.href).searchParams.get('path');document.querySelector('#memberTools p').textContent='Selected: '+window.memberPath});});
 memberObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
+const imageAssignObserver=new MutationObserver(()=>{let grid=document.querySelector('#detail .grid');if(!grid||document.querySelector('#imageAssignTools'))return;grid.querySelectorAll('a').forEach(a=>{let checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.className='imageSelect';checkbox.setAttribute('aria-label','Select image');checkbox.dataset.path=new URL(a.href).searchParams.get('path');a.parentNode.insertBefore(checkbox,a)});let tools=document.createElement('div');tools.id='imageAssignTools';tools.className='meta';tools.innerHTML='<b>Selected image assignment</b><br><button type="button" onclick="assignSelectedImages()">Assign selected to identity</button><button type="button" onclick="createIdentity()">Save typed identity as new</button><p class="muted">Use the identity field below, select several images, then assign them together.</p>';document.querySelector('#detail').insertBefore(tools,grid)});
+imageAssignObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
+async function assignSelectedImages(){let paths=[...document.querySelectorAll('.imageSelect:checked')].map(x=>x.dataset.path);let identity=document.querySelector('#identity')?.value.trim();if(!paths.length||!identity){alert('Select at least one image and enter an identity');return}let r=await fetch('/api/image-decisions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths,identity,family:document.querySelector('#family')?.value||'review',status:document.querySelector('#decisionStatus')?.value||'pending',notes:document.querySelector('#notes')?.value||''})});let d=await r.json();if(!r.ok){alert(d.error||'Image assignment failed');return}document.querySelector('#imageAssignTools p').textContent='Assigned '+d.saved+' selected images to '+d.identity}
+async function createIdentity(){let identity=document.querySelector('#identity')?.value.trim();if(!identity){alert('Enter an identity first');return}let r=await fetch('/api/identities',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({canonical:identity,family:document.querySelector('#family')?.value||'review',notes:document.querySelector('#notes')?.value||''})});let d=await r.json();document.querySelector('#imageAssignTools p').textContent=r.ok?'Saved new review identity '+d.identity:(d.error||'Identity creation failed')}
 async function updateMember(action){if(!window.memberPath){alert('Select an image first');return}let body={path:window.memberPath,action};if(action==='add')body.target_cluster_id=document.querySelector('#targetCluster').value||selected;let r=await fetch('/api/clusters/'+selected+'/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=await r.json();if(!r.ok){alert(d.error||'Membership update failed');return}select(selected)}
 let loadGeneration=0;
+async function loadClusterImages(offset=0){let grid=document.querySelector('#detail .grid');if(!grid)return;let x=await fetch('/api/clusters/'+selected).then(r=>r.json());let paths=x.paths.slice(offset,offset+100);let html=paths.map(p=>`<a href="/media?path=${encodeURIComponent(p)}" target="_blank"><img src="/media?path=${encodeURIComponent(p)}" loading="lazy" title="${esc(p)}"></a>`).join('');if(offset===0)grid.innerHTML='';grid.insertAdjacentHTML('beforeend',html);grid.dataset.loaded=String(offset+paths.length);let more=document.querySelector('#moreClusterImages');if(more)more.remove();if(offset+paths.length<x.paths.length){let button=document.createElement('button');button.id='moreClusterImages';button.type='button';button.textContent=`Load more images (${offset+paths.length}/${x.paths.length})`;button.onclick=()=>loadClusterImages(offset+paths.length);grid.parentNode.insertBefore(button,grid.nextSibling)}}
+const clusterImageObserver=new MutationObserver(()=>{let grid=document.querySelector('#detail .grid');if(grid&&!grid.dataset.loaded)loadClusterImages()});
+clusterImageObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
 async function loadPage(reset){let generation=++loadGeneration;if(reset){page=1;clusters=[];document.querySelector('#list').textContent='Loading…'}let q=encodeURIComponent(document.querySelector('#filter').value);try{let r=await fetch(`/api/clusters?page=${page}&page_size=50&q=${q}`,{headers:{Accept:'application/json'}});let c=await r.json();if(!r.ok)throw new Error(c.error||`Request failed (${r.status})`);if(generation!==loadGeneration)return;clusters=reset?c.clusters:clusters.concat(c.clusters);hasNext=c.has_next;document.querySelector('#summary').textContent=`${c.total} matching clusters · loaded ${clusters.length}`;let next=document.querySelector('#nextPage');next.disabled=!hasNext;next.textContent=hasNext?'Next page':'No more pages';renderList();if(reset&&clusters[0]){select(clusters[0].cluster_id);page=2}else if(!reset&&hasNext)page++}catch(error){if(generation!==loadGeneration)return;document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)} <button type="button" onclick="loadPage(${reset})">Retry</button></p>`}}
 async function init(){try{let r=await fetch('/api/summary',{headers:{Accept:'application/json'}});let a=await r.json();if(!r.ok)throw new Error(a.error||`Request failed (${r.status})`);document.querySelector('#summary').textContent=`${a.clusters} clusters · ${a.decisions} saved decisions`;await loadPage(true)}catch(error){document.querySelector('#summary').innerHTML=`<span role="alert">${esc(error.message)}</span>`;document.querySelector('#list').innerHTML='<button type="button" onclick="init()">Retry loading</button>'}}
 window.addEventListener('unhandledrejection',event=>{let detail=document.querySelector('#detail');if(detail)detail.innerHTML=`<p role="alert">${esc(event.reason?.message||'The request failed.')} <button type="button" onclick="select(selected)">Retry</button></p>`});
@@ -474,6 +549,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audit", type=Path, help="audit JSON; defaults to newest file in /tmp/picorg_sorted_audit")
     parser.add_argument("--decisions", type=Path, default=DEFAULT_DECISIONS)
+    parser.add_argument("--image-decisions", type=Path, default=DEFAULT_IMAGE_DECISIONS)
+    parser.add_argument("--review-identities", type=Path, default=DEFAULT_REVIEW_IDENTITIES)
     parser.add_argument("--export-registry", action="store_true", help="promote confirmed decisions into the registry")
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--host", default=DEFAULT_HOST, help="bind address; use 127.0.0.1 for local-only access")
@@ -483,7 +560,7 @@ def main() -> int:
         print(f"promoted {export_confirmed_decisions(args.decisions, args.registry)} confirmed decisions")
         return 0
     audit_path = args.audit or latest_audit()
-    create_app(audit_path, args.decisions).run(host=args.host, port=args.port, debug=False)
+    create_app(audit_path, args.decisions, DEFAULT_OVERRIDES, args.image_decisions, args.review_identities).run(host=args.host, port=args.port, debug=False)
     return 0
 
 

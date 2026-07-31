@@ -179,6 +179,22 @@ reviewer membership overrides in `review_overrides.json`. Use `target_cluster_id
 to move an image to another candidate cluster. Removing a decision is supported
 with `DELETE /api/decisions/<cluster_id>`.
 
+For face-based candidate grouping within the unmatched collection, install the
+optional dependencies and generate a review audit:
+
+```bash
+.venv/bin/pip install -r requirements-face.txt
+.venv/bin/python face_cluster_unmatched.py \
+  --audit /tmp/picorg_sorted_audit/20260731T170645Z.json \
+  --output /tmp/picorg_sorted_audit/20260731T170645Z.face-clusters.json
+```
+
+Open that face-cluster audit with the same UI. It is a similarity candidate
+queue, not identity confirmation: multi-face/low-quality images are deferred,
+and no face result is exported automatically. Within a cluster, select several
+images and use “Assign selected to identity”; type a new identity and use “Save
+typed identity as new” to record it in the separate review identity ledger.
+
 Use `GET /api/export-preview` to inspect which confirmed decisions are
 promotable. Decisions with the provisional `review` family are never exported.
 
