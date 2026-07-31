@@ -42,6 +42,19 @@ def vector_distance(left: Sequence[float], right: Sequence[float]) -> float:
     return math.sqrt(sum((float(a) - float(b)) ** 2 for a, b in zip(left, right)))
 
 
+def load_rgb_image(path: Path):
+    """Load an image as RGB without mutating the source file.
+
+    Converting paletted PNGs in memory avoids Pillow's transparency warning and
+    prevents a workflow cleanup pass from changing file fingerprints/cache keys.
+    """
+    from PIL import Image
+    import numpy as np
+
+    with Image.open(path) as source:
+        return np.asarray(source.convert("RGB"))
+
+
 def cluster_embeddings(records: Iterable[Tuple[str, Sequence[float]]], threshold: float = DEFAULT_THRESHOLD) -> List[Dict[str, Any]]:
     """Cluster embeddings using bounded representative comparisons.
 
@@ -139,7 +152,7 @@ def extract_embeddings(
             rate = stats["selected"] / elapsed
             print(f"face extraction: {stats['selected']}/{total} selected, embedded={stats['embedded']}, no_face={stats['no_face']}, rate={rate:.1f}/s", flush=True)
         try:
-            image = face_recognition.load_image_file(str(path))
+            image = load_rgb_image(path)
             locations = face_recognition.face_locations(image, model="small")
             if not locations:
                 stats["no_face"] += 1

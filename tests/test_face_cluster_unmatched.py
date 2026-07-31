@@ -24,3 +24,15 @@ def test_file_fingerprint_changes_when_file_changes(tmp_path):
     first = matcher.file_fingerprint(path)
     path.write_bytes(b"second")
     assert matcher.file_fingerprint(path) != first
+
+
+def test_load_rgb_image_converts_palette_transparency_without_mutating_source(tmp_path):
+    from PIL import Image
+
+    path = tmp_path / "palette.png"
+    image = Image.new("P", (2, 2))
+    image.info["transparency"] = 0
+    image.save(path)
+    loaded = matcher.load_rgb_image(path)
+    assert loaded.shape == (2, 2, 3)
+    assert Image.open(path).mode == "P"
