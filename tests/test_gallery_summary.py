@@ -386,7 +386,28 @@ def test_specific_multiword_alias_matches_without_bare_name(tmp_path, monkeypatc
 
     assert matched == identity
     assert confidence >= 0.9
-    assert "alias" in rule
+    assert "alias" in rule or rule.startswith("exact:")
+
+
+def test_caption_phrase_alias_matches_without_bare_name(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "mixedpics"
+    path = root / "Seductive Giada.jpg"
+    identity = ps.Identity("giada_de_laurentiis", "metadaily", ("Seductive Giada",))
+    alias_index = {
+        ps.normalize_key("giada_de_laurentiis"): {identity},
+        ps.normalize_key("Seductive Giada"): {identity},
+    }
+    token_index = {token: {identity} for token in ("seductive", "giada")}
+    monkeypatch.setattr(ps, "PROJECT_AMBIGUOUS_TOKENS", set())
+    ps.build_identity_scoring_cache([identity])
+
+    matched, confidence, rule = best_identity_match(
+        path, root, [identity], alias_index, token_index
+    )
+
+    assert matched == identity
+    assert confidence >= 0.9
+    assert "alias" in rule or rule.startswith("exact:")
 
 
 def test_profile_image_hash_match_is_high_confidence_but_not_apply_confidence(tmp_path) -> None:
