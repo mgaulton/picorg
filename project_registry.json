@@ -63,6 +63,12 @@
   },
   "entries": [
     {
+      "family": "pscrape",
+      "canonical": "hannahowo",
+      "aliases": ["Hannah Owo", "hannah owo"],
+      "notes": "Validated from /opt/pscrape/hannahowo.txt and downloader filenames."
+    },
+    {
       "family": "metadaily",
       "canonical": "giada_de_laurentiis",
       "aliases": ["Giada De Laurentiis", "Giada De Laurentis"],

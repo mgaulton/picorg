@@ -1,8 +1,8 @@
 # Work: picorg
 
 work_id: picorg
-updated: 2026-07-08
-agent_last: bootstrap
+updated: 2026-07-31
+agent_last: codex
 spec_kit: <optional — link or path to spec/plan/tasks when multi-step>
 
 ## Goal
@@ -45,7 +45,7 @@ Ordered, checkable items. One agent turn ≈ one task when possible.
 
 ## Next (ordered)
 
-1. Review `OPERATING_POLICY.md` and `README.md` for the manual rubric before any apply run.
+1. Expand validated identity/source coverage to raise recall above 0.99; keep apply limited to confidence >= 0.95.
 2. Run `picorg_sorter.py manifest` if you want a persisted source map.
 3. Expand the source registry if new follow/friends lists appear.
 
