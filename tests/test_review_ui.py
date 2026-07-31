@@ -82,3 +82,29 @@ def test_review_family_is_not_exportable(tmp_path):
 
     assert review_ui.export_confirmed_decisions(decisions, registry) == 0
     assert json.loads(registry.read_text())["entries"] == []
+
+
+def test_paginated_cached_queue_and_member_edits(tmp_path):
+    audit = audit_payload(tmp_path)
+    decisions = tmp_path / "decisions.json"
+    overrides = tmp_path / "overrides.json"
+    app = review_ui.create_app(audit, decisions, overrides)
+    client = app.test_client()
+
+    first_page = client.get("/api/clusters?page=1&page_size=1").get_json()
+    assert first_page["page_size"] == 1
+    assert first_page["has_next"] is False
+    cluster_id = first_page["clusters"][0]["cluster_id"]
+    path = review_ui.build_clusters(json.loads(audit.read_text()))[0]["paths"][0]
+    assert audit.with_suffix(".clusters.json").exists()
+
+    removed = client.post(f"/api/clusters/{cluster_id}/members", json={"path": path, "action": "remove"})
+    assert removed.status_code == 201
+    assert path not in client.get(f"/api/clusters/{cluster_id}").get_json()["paths"]
+    added = client.post(f"/api/clusters/{cluster_id}/members", json={"path": path, "action": "add"})
+    assert added.status_code == 201
+    assert path in client.get(f"/api/clusters/{cluster_id}").get_json()["paths"]
+
+    saved = client.post("/api/decisions", json={"cluster_id": cluster_id, "identity": "creator_a", "family": "review"})
+    assert saved.status_code == 201
+    assert client.delete(f"/api/decisions/{cluster_id}").status_code == 200

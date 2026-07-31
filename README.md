@@ -144,8 +144,10 @@ python3 review_ui.py \
   --decisions /opt/picorg/review_decisions.json
 ```
 
-Open `http://<picorg-host-ip>:8787/` from a LAN device. The UI shows the top 2,000 unmatched clusters,
-previews allowlisted local media, and records explicit assignments in
+Open `http://<picorg-host-ip>:8787/` from a LAN device. The UI loads 50 clusters
+at a time and requests more pages on demand; the cluster index is cached beside
+the audit as `*.clusters.json`, so restarts avoid rebuilding unchanged audits.
+It previews allowlisted local media and records explicit assignments in
 `review_decisions.json`. It never moves files or edits the registry; promote
 reviewed decisions only after recording independent evidence.
 
@@ -166,6 +168,11 @@ Only confirmed decisions can be promoted explicitly:
 The bulk endpoint (`POST /api/decisions/bulk`) can assign the same identity to
 several selected cluster IDs; it still records the chosen status and requires
 an explicit later export for registry changes.
+
+`POST /api/clusters/<cluster_id>/members` with `action: add` or `remove` stores
+reviewer membership overrides in `review_overrides.json`. Use `target_cluster_id`
+to move an image to another candidate cluster. Removing a decision is supported
+with `DELETE /api/decisions/<cluster_id>`.
 
 Use `GET /api/export-preview` to inspect which confirmed decisions are
 promotable. Decisions with the provisional `review` family are never exported.
