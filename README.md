@@ -17,6 +17,7 @@ Deterministic organizer for mixed Reddit media intake.
 - Apply mode skips matches below `0.95` confidence and reports them for review.
 - Face grouping supports deterministic `--offset`, `--max-files`, and `--checkpoint` batching so the full unmatched set can be processed and resumed without repeating earlier work.
 - `runweb.sh` stores face embeddings in the durable repo-local `.cache/picorg/` directory and migrates a matching legacy `/tmp` cache automatically; set `CACHE_ROOT` or `FACE_CACHE` to use another durable location.
+- `picorg_manual.sh dry-run` stores audit JSON in durable `.cache/picorg/audits/` by default; set `AUDIT_ROOT` to choose another location.
 - The face-grouping environment requires `setuptools<81` because the installed `face_recognition_models` package imports the legacy `pkg_resources` API.
 - `run_face_group_batches.sh` resumes all batches and finishes with `reconcile_face_group_batches.py`, which deduplicates paths and evaluates cross-batch cluster consensus.
 - Bare generic words are not treated as identities unless they are part of a username/handle-shaped string.

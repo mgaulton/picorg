@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${PYTHON:-python3}"
-AUDIT_ROOT="${AUDIT_ROOT:-/tmp/picorg_sorted_audit}"
+AUDIT_ROOT="${AUDIT_ROOT:-$ROOT_DIR/.cache/picorg/audits}"
 LIMIT="${LIMIT:-20}"
 OCR_IMAGE="${OCR_IMAGE:-}"
 OCR_COMMAND_JSON="${OCR_COMMAND_JSON:-}"
@@ -41,6 +41,7 @@ done
 
 case "$cmd" in
   dry-run)
+    mkdir -p "$AUDIT_ROOT"
     if [ -n "$OCR_IMAGE" ]; then
       export PICORG_OCR_IMAGE="$OCR_IMAGE"
     fi
@@ -50,6 +51,7 @@ case "$cmd" in
     exec "$PYTHON" "$ROOT_DIR/picorg_sorter.py" dry-run --limit "$LIMIT" --audit-root "$AUDIT_ROOT" --audit-out /tmp/picorg_periodic_dry.json
     ;;
   apply)
+    mkdir -p "$AUDIT_ROOT"
     if [ -n "$OCR_IMAGE" ]; then
       export PICORG_OCR_IMAGE="$OCR_IMAGE"
     fi
