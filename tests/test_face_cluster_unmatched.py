@@ -36,3 +36,14 @@ def test_load_rgb_image_converts_palette_transparency_without_mutating_source(tm
     loaded = matcher.load_rgb_image(path)
     assert loaded.shape == (2, 2, 3)
     assert Image.open(path).mode == "P"
+
+
+def test_extract_embeddings_records_error_categories(tmp_path):
+    audit = tmp_path / "audit.json"
+    missing = tmp_path / "missing.jpg"
+    audit.write_text('{"results": [{"path": "' + str(missing) + '"}]}')
+    cache = tmp_path / "cache.json"
+    _, stats = matcher.extract_embeddings(audit, cache_path=cache, checkpoint_seconds=1)
+    assert stats["errors"] == 1
+    assert stats["error_categories"]["FileNotFoundError"] == 1
+    assert stats["error_samples"][0]["path"] == str(missing)

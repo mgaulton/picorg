@@ -107,7 +107,8 @@ def extract_embeddings(
     num_jitters: int = 1,
     cache_path: Path | None = None,
     checkpoint_every: int = 500,
-) -> Tuple[List[Tuple[str, List[float]]], Dict[str, int]]:
+    checkpoint_seconds: float = 300.0,
+) -> Tuple[List[Tuple[str, List[float]]], Dict[str, Any]]:
     """Extract one usable face embedding per unmatched image.
 
     The optional dependency is imported lazily so the rest of picorg remains
@@ -119,7 +120,7 @@ def extract_embeddings(
         raise RuntimeError("face clustering requires face_recognition and numpy; install requirements-face.txt") from exc
 
     records: List[Tuple[str, List[float]]] = []
-    stats = {"selected": 0, "embedded": 0, "cached": 0, "no_face": 0, "multi_face_deferred": 0, "low_quality": 0, "errors": 0}
+    stats: Dict[str, Any] = {"selected": 0, "embedded": 0, "cached": 0, "no_face": 0, "multi_face_deferred": 0, "low_quality": 0, "errors": 0, "error_categories": {}, "error_samples": []}
     items = load_unmatched_paths(audit_path)
     total = min(len(items), max_images) if max_images else len(items)
     cached_records: Dict[str, List[float]] = {}
@@ -130,7 +131,24 @@ def extract_embeddings(
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             cached_records = {}
     started = time.monotonic()
+    last_checkpoint = started
     print(f"face extraction: starting {total} unmatched images, cached={len(cached_records)}", flush=True)
+
+    def record_error(path: Path, exc: Exception) -> None:
+        category = type(exc).__name__
+        stats["errors"] += 1
+        stats["error_categories"][category] = stats["error_categories"].get(category, 0) + 1
+        if len(stats["error_samples"]) < 20:
+            stats["error_samples"].append({"path": str(path), "type": category, "message": str(exc)[:240]})
+
+    def checkpoint() -> None:
+        nonlocal last_checkpoint
+        if not cache_path:
+            return
+        audit_stat = audit_path.stat()
+        _atomic_write(cache_path, {"schema_version": 1, "audit": {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}, "records": cached_records, "progress": stats})
+        last_checkpoint = time.monotonic()
+        print(f"face extraction: checkpoint saved to {cache_path}", flush=True)
     for item in items:
         if max_images and stats["selected"] >= max_images:
             break
@@ -144,8 +162,8 @@ def extract_embeddings(
                 stats["cached"] += 1
                 stats["embedded"] += 1
                 continue
-        except OSError:
-            stats["errors"] += 1
+        except OSError as exc:
+            record_error(path, exc)
             continue
         if stats["selected"] % 100 == 0:
             elapsed = max(0.001, time.monotonic() - started)
@@ -172,15 +190,12 @@ def extract_embeddings(
                 records.append((str(path), vector))
                 cached_records[str(path)] = {"fingerprint": fingerprint, "embedding": vector}
                 stats["embedded"] += 1
-        except Exception:
-            stats["errors"] += 1
-        if cache_path and stats["selected"] % max(1, checkpoint_every) == 0:
-            audit_stat = audit_path.stat()
-            _atomic_write(cache_path, {"schema_version": 1, "audit": {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}, "records": cached_records, "progress": stats})
-            print(f"face extraction: checkpoint saved to {cache_path}", flush=True)
+        except Exception as exc:
+            record_error(path, exc)
+        if cache_path and (stats["selected"] % max(1, checkpoint_every) == 0 or time.monotonic() - last_checkpoint >= max(1.0, checkpoint_seconds)):
+            checkpoint()
     if cache_path:
-        audit_stat = audit_path.stat()
-        _atomic_write(cache_path, {"schema_version": 1, "audit": {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}, "records": cached_records, "progress": stats})
+        checkpoint()
     return records, stats
 
 
@@ -196,9 +211,10 @@ def main() -> int:
     parser.add_argument("--num-jitters", type=int, default=1)
     parser.add_argument("--cache", type=Path, help="embedding cache for safe resume")
     parser.add_argument("--checkpoint-every", type=int, default=500)
+    parser.add_argument("--checkpoint-seconds", type=float, default=300.0)
     args = parser.parse_args()
     cache_path = args.cache or args.output.with_suffix(".embeddings.json")
-    records, stats = extract_embeddings(args.audit, args.max_images, args.min_face_pixels, args.min_face_area_ratio, args.allow_multi_face, args.num_jitters, cache_path, args.checkpoint_every)
+    records, stats = extract_embeddings(args.audit, args.max_images, args.min_face_pixels, args.min_face_area_ratio, args.allow_multi_face, args.num_jitters, cache_path, args.checkpoint_every, args.checkpoint_seconds)
     clusters = cluster_embeddings(records, args.threshold)
     results = [
         {"path": path, "title": cluster["cluster_id"], "canonical": None, "source_root": str(Path(path).parent), "face_cluster_id": cluster["cluster_id"]}

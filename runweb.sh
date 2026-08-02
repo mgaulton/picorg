@@ -14,6 +14,13 @@ REVIEW_IDENTITIES="${REVIEW_IDENTITIES:-$ROOT_DIR/review_identities.json}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8787}"
 
+LOCK_FILE="${LOCK_FILE:-/tmp/picorg-runweb.lock}"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    echo "another runweb.sh instance is already active (lock: $LOCK_FILE)" >&2
+    exit 1
+fi
+
 if [[ ! -f "$AUDIT" ]]; then
     echo "error: audit not found: $AUDIT" >&2
     exit 2
