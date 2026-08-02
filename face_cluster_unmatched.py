@@ -163,6 +163,10 @@ def extract_embeddings(
             break
         stats["selected"] += 1
         path = Path(str(item["path"]))
+        if stats["selected"] % 100 == 0:
+            elapsed = max(0.001, time.monotonic() - started)
+            rate = stats["selected"] / elapsed
+            print(f"face extraction: {stats['selected']}/{total} selected, embedded={stats['embedded']}, cached={stats['cached']}, no_face={stats['no_face']}, rate={rate:.1f}/s", flush=True)
         try:
             fingerprint = file_fingerprint(path)
             cached = cached_records.get(str(path))
@@ -186,10 +190,6 @@ def extract_embeddings(
         except OSError as exc:
             record_error(path, exc)
             continue
-        if stats["selected"] % 100 == 0:
-            elapsed = max(0.001, time.monotonic() - started)
-            rate = stats["selected"] / elapsed
-            print(f"face extraction: {stats['selected']}/{total} selected, embedded={stats['embedded']}, no_face={stats['no_face']}, rate={rate:.1f}/s", flush=True)
         try:
             image = load_rgb_image(path)
             locations = face_recognition.face_locations(image, model="small")
