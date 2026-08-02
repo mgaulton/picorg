@@ -64,3 +64,14 @@ def test_terminal_face_statuses_are_reused_from_cache(tmp_path):
     _, stats = matcher.extract_embeddings(audit, cache_path=cache)
     assert stats["cached"] == 1
     assert stats["no_face"] == 1
+
+
+def test_load_rgb_image_rejects_invalid_image_data(tmp_path):
+    path = tmp_path / "invalid.jpg"
+    path.write_bytes(b'c"not-a-jpeg')
+    try:
+        matcher.load_rgb_image(path)
+    except (OSError, ValueError):
+        pass
+    else:
+        raise AssertionError("invalid image data was accepted")

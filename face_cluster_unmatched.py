@@ -53,6 +53,8 @@ def load_rgb_image(path: Path):
     import numpy as np
 
     with Image.open(path) as source:
+        source.verify()
+    with Image.open(path) as source:
         return np.asarray(source.convert("RGB"))
 
 
