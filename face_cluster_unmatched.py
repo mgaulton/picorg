@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 DEFAULT_THRESHOLD = 0.48
 DEFAULT_MIN_FACE_PIXELS = 80
 DEFAULT_MIN_FACE_AREA_RATIO = 0.01
+EMBEDDING_MODEL_ID = "dlib-face-recognition-small-v1"
 
 
 def file_fingerprint(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -127,7 +128,13 @@ def extract_embeddings(
     if cache_path and cache_path.is_file():
         try:
             cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
-            cached_records = cached_payload.get("records", {})
+            if cached_payload.get("model_id") in (None, EMBEDDING_MODEL_ID):
+                cached_records = cached_payload.get("records", {})
+                if cached_payload.get("model_id") is None:
+                    print("face extraction: accepting legacy cache and upgrading metadata", flush=True)
+            else:
+                cached_records = {}
+                print("face extraction: ignored cache with incompatible model_id", flush=True)
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             cached_records = {}
     started = time.monotonic()
@@ -146,7 +153,7 @@ def extract_embeddings(
         if not cache_path:
             return
         audit_stat = audit_path.stat()
-        _atomic_write(cache_path, {"schema_version": 1, "audit": {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}, "records": cached_records, "progress": stats})
+        _atomic_write(cache_path, {"schema_version": 2, "model_id": EMBEDDING_MODEL_ID, "detector": "small", "audit": {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}, "records": cached_records, "progress": stats})
         last_checkpoint = time.monotonic()
         print(f"face extraction: checkpoint saved to {cache_path}", flush=True)
     for item in items:
@@ -221,7 +228,7 @@ def main() -> int:
         for cluster in clusters
         for path in cluster["paths"]
     ]
-    payload = {"schema_version": 1, "source": "face_embedding_cluster", "threshold": args.threshold, "report": {**stats, "clusters": len(clusters)}, "results": results}
+    payload = {"schema_version": 2, "source": "face_embedding_cluster", "model_id": EMBEDDING_MODEL_ID, "detector": "small", "threshold": args.threshold, "report": {**stats, "clusters": len(clusters)}, "results": results}
     _atomic_write(args.output, payload)
     print(json.dumps({**stats, "clusters": len(clusters), "output": str(args.output)}, sort_keys=True))
     return 0

@@ -47,3 +47,7 @@ def test_extract_embeddings_records_error_categories(tmp_path):
     assert stats["errors"] == 1
     assert stats["error_categories"]["FileNotFoundError"] == 1
     assert stats["error_samples"][0]["path"] == str(missing)
+
+
+def test_embedding_model_id_is_explicit():
+    assert matcher.EMBEDDING_MODEL_ID == "dlib-face-recognition-small-v1"
