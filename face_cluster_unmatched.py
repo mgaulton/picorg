@@ -216,7 +216,8 @@ def extract_embeddings(
                 stats["embedded"] += 1
         except Exception as exc:
             record_error(path, exc)
-            if not isinstance(exc, OSError):
+            terminal_decode_error = type(exc).__name__ in {"UnidentifiedImageError", "DecompressionBombError"}
+            if not isinstance(exc, OSError) or terminal_decode_error:
                 cached_records[str(path)] = {"fingerprint": fingerprint, "status": "error", "error_type": type(exc).__name__}
         if cache_path and (stats["selected"] % max(1, checkpoint_every) == 0 or time.monotonic() - last_checkpoint >= max(1.0, checkpoint_seconds)):
             checkpoint()
