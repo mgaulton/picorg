@@ -4,7 +4,11 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-AUDIT="${AUDIT:-/tmp/picorg_sorted_audit/20260731T170645Z.json}"
+AUDIT_ROOT="${AUDIT_ROOT:-$ROOT_DIR/.cache/picorg/audits}"
+if [[ -z "${AUDIT:-}" ]]; then
+    AUDIT="$(ls -1t "$AUDIT_ROOT"/*.json 2>/dev/null | head -n 1 || true)"
+    AUDIT="${AUDIT:-/tmp/picorg_sorted_audit/20260731T170645Z.json}"
+fi
 FACE_AUDIT="${FACE_AUDIT:-${AUDIT%.json}.face-clusters.json}"
 CACHE_ROOT="${CACHE_ROOT:-$ROOT_DIR/.cache/picorg}"
 mkdir -p "$CACHE_ROOT"
