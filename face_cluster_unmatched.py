@@ -124,7 +124,7 @@ def extract_embeddings(
     stats: Dict[str, Any] = {"selected": 0, "embedded": 0, "cached": 0, "no_face": 0, "multi_face_deferred": 0, "low_quality": 0, "errors": 0, "error_categories": {}, "error_samples": []}
     items = load_unmatched_paths(audit_path)
     total = min(len(items), max_images) if max_images else len(items)
-    cached_records: Dict[str, List[float]] = {}
+    cached_records: Dict[str, Any] = {}
     if cache_path and cache_path.is_file():
         try:
             cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -165,10 +165,22 @@ def extract_embeddings(
             fingerprint = file_fingerprint(path)
             cached = cached_records.get(str(path))
             if isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
-                records.append((str(path), [float(value) for value in cached["embedding"]]))
-                stats["cached"] += 1
-                stats["embedded"] += 1
-                continue
+                if isinstance(cached.get("embedding"), list):
+                    records.append((str(path), [float(value) for value in cached["embedding"]]))
+                    stats["cached"] += 1
+                    stats["embedded"] += 1
+                    continue
+                status = cached.get("status")
+                if status in {"no_face", "multi_face_deferred", "low_quality"}:
+                    stats["cached"] += 1
+                    stats[status] += 1
+                    continue
+                if status == "error" and cached.get("error_type"):
+                    stats["cached"] += 1
+                    stats["errors"] += 1
+                    category = str(cached["error_type"])
+                    stats["error_categories"][category] = stats["error_categories"].get(category, 0) + 1
+                    continue
         except OSError as exc:
             record_error(path, exc)
             continue
@@ -181,15 +193,18 @@ def extract_embeddings(
             locations = face_recognition.face_locations(image, model="small")
             if not locations:
                 stats["no_face"] += 1
+                cached_records[str(path)] = {"fingerprint": fingerprint, "status": "no_face"}
                 continue
             if len(locations) != 1 and not allow_multi_face:
                 stats["multi_face_deferred"] += 1
+                cached_records[str(path)] = {"fingerprint": fingerprint, "status": "multi_face_deferred"}
                 continue
             location = max(locations, key=lambda box: (box[2] - box[0]) * (box[1] - box[3]))
             height, width = image.shape[:2]
             face_height, face_width = location[2] - location[0], location[1] - location[3]
             if min(face_height, face_width) < min_face_pixels or (face_height * face_width) / max(1, height * width) < min_face_area_ratio:
                 stats["low_quality"] += 1
+                cached_records[str(path)] = {"fingerprint": fingerprint, "status": "low_quality"}
                 continue
             encodings = face_recognition.face_encodings(image, known_face_locations=[location], num_jitters=max(1, num_jitters), model="small")
             if encodings:
@@ -199,6 +214,8 @@ def extract_embeddings(
                 stats["embedded"] += 1
         except Exception as exc:
             record_error(path, exc)
+            if not isinstance(exc, OSError):
+                cached_records[str(path)] = {"fingerprint": fingerprint, "status": "error", "error_type": type(exc).__name__}
         if cache_path and (stats["selected"] % max(1, checkpoint_every) == 0 or time.monotonic() - last_checkpoint >= max(1.0, checkpoint_seconds)):
             checkpoint()
     if cache_path:

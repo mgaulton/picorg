@@ -51,3 +51,16 @@ def test_extract_embeddings_records_error_categories(tmp_path):
 
 def test_embedding_model_id_is_explicit():
     assert matcher.EMBEDDING_MODEL_ID == "dlib-face-recognition-small-v1"
+
+
+def test_terminal_face_statuses_are_reused_from_cache(tmp_path):
+    path = tmp_path / "image.bin"
+    path.write_bytes(b"unchanged")
+    audit = tmp_path / "audit.json"
+    audit.write_text('{"results": [{"path": "' + str(path) + '"}]}')
+    fingerprint = matcher.file_fingerprint(path)
+    cache = tmp_path / "cache.json"
+    cache.write_text('{"model_id": "' + matcher.EMBEDDING_MODEL_ID + '", "records": {"' + str(path) + '": {"fingerprint": "' + fingerprint + '", "status": "no_face"}}}')
+    _, stats = matcher.extract_embeddings(audit, cache_path=cache)
+    assert stats["cached"] == 1
+    assert stats["no_face"] == 1
