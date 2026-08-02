@@ -6,7 +6,10 @@ cd "$ROOT_DIR"
 
 AUDIT="${AUDIT:-/tmp/picorg_sorted_audit/20260731T170645Z.json}"
 FACE_AUDIT="${FACE_AUDIT:-${AUDIT%.json}.face-clusters.json}"
-FACE_CACHE="${FACE_CACHE:-${AUDIT%.json}.face-embeddings.json}"
+CACHE_ROOT="${CACHE_ROOT:-$ROOT_DIR/.cache/picorg}"
+mkdir -p "$CACHE_ROOT"
+FACE_CACHE="${FACE_CACHE:-$CACHE_ROOT/$(basename "${AUDIT%.json}").face-embeddings.json}"
+LEGACY_FACE_CACHE="${AUDIT%.json}.face-embeddings.json"
 RECONCILED_AUDIT="${RECONCILED_AUDIT:-${AUDIT%.json}.reconciled.json}"
 DECISIONS="${DECISIONS:-$ROOT_DIR/review_decisions.json}"
 IMAGE_DECISIONS="${IMAGE_DECISIONS:-$ROOT_DIR/review_image_decisions.json}"
@@ -24,6 +27,11 @@ fi
 if [[ ! -f "$AUDIT" ]]; then
     echo "error: audit not found: $AUDIT" >&2
     exit 2
+fi
+
+if [[ ! -s "$FACE_CACHE" && -s "$LEGACY_FACE_CACHE" ]]; then
+    cp -p -- "$LEGACY_FACE_CACHE" "$FACE_CACHE"
+    echo "migrated embedding cache to $FACE_CACHE"
 fi
 
 echo "[1/4] validating face-matching dependency"

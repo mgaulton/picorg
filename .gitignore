@@ -11,5 +11,6 @@ docs/agent-workbench/
 
 # Local runtime outputs
 /tmp/
+.cache/
 *.audit.json
 profile_image_index.json
