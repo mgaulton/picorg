@@ -920,9 +920,9 @@ def load_identity_catalog() -> Tuple[
         add_text_alias_file(path, "reddit_follow", source_kind="weak")
 
     for root, family in ((REDDITDAILY_ROOT, "redditdaily"), (PSCRAPE_ROOT, "pscrape")):
-        if not root.exists():
-            continue
         try:
+            if not root.exists():
+                continue
             with os.scandir(root) as entries:
                 for entry in entries:
                     name = entry.name
