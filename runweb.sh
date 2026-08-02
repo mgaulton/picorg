@@ -27,6 +27,10 @@ if ! flock -n 9; then
     echo "another runweb.sh instance is already active (lock: $LOCK_FILE)" >&2
     exit 1
 fi
+LOG_ROOT="${LOG_ROOT:-$ROOT_DIR/.cache/picorg/logs}"
+mkdir -p "$LOG_ROOT"
+LOG_FILE="${LOG_FILE:-$LOG_ROOT/runweb-$(date -u +%Y%m%dT%H%M%SZ).log}"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 if [[ ! -f "$AUDIT" ]]; then
     echo "error: audit not found: $AUDIT" >&2
