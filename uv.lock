@@ -942,7 +942,7 @@ requires-dist = [
     { name = "face-recognition", marker = "extra == 'face'", specifier = ">=1.3.0" },
     { name = "insightface", marker = "extra == 'insightface'", specifier = "==0.7.3" },
     { name = "onnxruntime", marker = "extra == 'insightface'", specifier = ">=1.18,<2" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8,<9" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.3,<10" },
 ]
 provides-extras = ["test", "face", "insightface"]
 
@@ -1204,7 +1204,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "8.4.2"
+version = "9.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -1213,9 +1213,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01", size = 1519618, upload-time = "2025-09-04T14:34:22.711Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79", size = 365750, upload-time = "2025-09-04T14:34:20.226Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
 ]
 
 [[package]]
@@ -1424,7 +1424,7 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822, upload-time = "2026-02-23T00:26:24.851Z" }
 wheels = [
@@ -1499,7 +1499,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a7/25/c2700dfaf6442b4effaa91af24ebce5dc9d31bb4a69706313aae70d72cd0/scipy-1.18.0.tar.gz", hash = "sha256:67b2ad2ad54c72ca6d04975a9b2df8c3638c34ddd5b28738e94fc2b57929d378", size = 30774447, upload-time = "2026-06-19T15:01:43.456Z" }
 wheels = [
@@ -1726,7 +1726,7 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c5/cb/2f6d79c7576e22c116352a801f4c3c8ace5957e9aced862012430b62e14f/tifffile-2026.3.3.tar.gz", hash = "sha256:d9a1266bed6f2ee1dd0abde2018a38b4f8b2935cb843df381d70ac4eac5458b7", size = 388745, upload-time = "2026-03-03T19:14:38.134Z" }
 wheels = [
@@ -1742,7 +1742,7 @@ resolution-markers = [
     "python_full_version == '3.12.*'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/21/62/083288b8d6b9ecb2968e7573e60aa0694089e960e203934bc217169acf64/tifffile-2026.7.31.tar.gz", hash = "sha256:79b1f4b1aba3ef3e6b6f1691a32abb62f5d7383faa52a12771c695232ba40bee", size = 442177, upload-time = "2026-08-01T02:28:32.523Z" }
 wheels = [
