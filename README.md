@@ -20,6 +20,7 @@ Deterministic organizer for mixed Reddit media intake.
 - `picorg_manual.sh dry-run` stores audit JSON in durable `.cache/picorg/audits/` by default; set `AUDIT_ROOT` to choose another location.
 - `runweb.sh` automatically selects the newest audit from that durable directory when `AUDIT` is not explicitly set.
 - `runweb.sh` also writes a durable live log under `.cache/picorg/logs/` while continuing to stream output to screen; set `LOG_FILE` or `LOG_ROOT` to override.
+- `runweb.sh` writes a non-destructive `*.preflight.json` report before face extraction, separating missing, unsupported, empty, corrupt, oversized, and candidate inputs from model accuracy.
 - The face-grouping environment requires `setuptools<81` because the installed `face_recognition_models` package imports the legacy `pkg_resources` API.
 - `run_face_group_batches.sh` resumes all batches and finishes with `reconcile_face_group_batches.py`, which deduplicates paths and evaluates cross-batch cluster consensus.
 - Bare generic words are not treated as identities unless they are part of a username/handle-shaped string.
@@ -78,6 +79,34 @@ Inspect catalog:
 
 ```bash
 python3 picorg_sorter.py inspect --limit 20
+```
+
+Run input coverage preflight directly:
+
+```bash
+python3 media_preflight.py /path/to/audit.json --output /path/to/audit.preflight.json
+```
+
+Priority-aware exact dedupe (report first):
+
+```bash
+python3 dedupe_priority.py --output /tmp/picorg-priority-dedupe.json
+```
+
+The protected `/mnt/elements16a/Pron/redditdaily` and `metadaily` trees are
+always treated as priority and are never modified. To quarantine verified exact
+duplicates from `/mnt/elements16/@mixedpics` and `/mnt/desktop/Pictures` after
+reviewing the report:
+
+```bash
+python3 dedupe_priority.py --apply
+```
+
+Run tests with the repository wrapper (it disables unrelated globally installed
+pytest plugins and prefers `.venv` when present):
+
+```bash
+./run_tests.sh
 ```
 
 ## Profile verification and image references
@@ -200,6 +229,39 @@ the optional dependency once:
 INSTALL_FACE_DEPS=1 ./runweb.sh
 ```
 
+For a single safe command that runs the dry-run pipeline, builds face groups,
+and starts the review UI on all LAN interfaces:
+
+```bash
+./run_face_review_pipeline.sh
+```
+
+It defaults to `HOST=0.0.0.0`, `PORT=8787`, skips `photo_reorg`, and never
+applies organizer moves. Override `PORT` or set `HOST=127.0.0.1` for local-only
+access.
+For LAN exposure, set `PICORG_UI_TOKEN` and send it as `X-Picorg-Token` (or a
+Bearer token); health probes remain unauthenticated.
+
+Add `--ingest` when incoming files should be fetched first:
+
+```bash
+./run_face_review_pipeline.sh --ingest
+```
+
+To explicitly enable live high-confidence processing:
+
+```bash
+./run_face_review_pipeline.sh --apply-high-confidence
+```
+
+This first applies picorg's high-confidence name matches (`>=0.95`), then
+rebuilds photo_reorg's face database from `REFERENCE_ROOT` (default
+`/mnt/elements16/@mixedpics_sorted`), matches remaining audit items against
+that database, and finally builds review-only face groups and starts the LAN UI.
+Review the dry-run results before enabling this mode; it is the only mode that
+moves files. Override `REFERENCE_ROOT` and `FACE_DB` when your canonical tree
+or database lives elsewhere.
+
 Subsequent starts reuse the cached face audit. Set `FORCE_FACE_REBUILD=1` after
 changing the source audit. Face embeddings are checkpointed every 500 images in
 `*.face-embeddings.json`, keyed by path and SHA-256 file fingerprint; unchanged
@@ -210,6 +272,8 @@ queue, not identity confirmation: multi-face/low-quality images are deferred,
 and no face result is exported automatically. Within a cluster, select several
 images and use “Assign selected to identity”; type a new identity and use “Save
 typed identity as new” to record it in the separate review identity ledger.
+When name and face groupings disagree, face-cluster membership drives the
+review cluster; name titles remain supporting context instead of merging faces.
 
 Use `GET /api/export-preview` to inspect which confirmed decisions are
 promotable. Decisions with the provisional `review` family are never exported.
@@ -268,10 +332,29 @@ Face clustering and identity confirmation use different operating points. Build
 a small local labelled-pair file, then calibrate a strict confirmation threshold
 from the cached embeddings:
 
+Generate the pair file reproducibly from confirmed review decisions:
+
+```bash
+python3 build_face_pairs.py \
+  --decisions review_decisions.json \
+  --embeddings /path/to/face-embeddings.json \
+  --output /tmp/picorg-labelled-pairs.json
+```
+
+Create a deterministic image-disjoint held-out set before calibration:
+
+```bash
+.venv/bin/python split_face_pairs.py \
+  --pairs /tmp/picorg-labelled-pairs.json \
+  --train-output .cache/picorg/face-train.json \
+  --heldout-output .cache/picorg/face-heldout.json
+```
+
 ```bash
 .venv/bin/python face_match_benchmark.py \
   --pairs /path/to/face-pairs.jsonl \
   --embeddings /tmp/picorg_sorted_audit/20260731T170645Z.face-embeddings.json \
+  --preflight /tmp/picorg_sorted_audit/20260731T170645Z.preflight.json \
   --max-fmr 0.001 \
   --output /tmp/picorg-face-calibration.json
 ```
@@ -279,6 +362,74 @@ from the cached embeddings:
 Use `selected.threshold` only for identity suggestions after review. Keep the
 face-cluster threshold broader for candidate discovery, and recalibrate when
 the embedding model, image population, or quality gates change.
+The report's `preflight_counts` show how many inputs were eligible candidates
+versus excluded before extraction; do not treat excluded files as model false
+nonmatches.
+The selected operating point also includes `fmr_ci95` and `fnmr_ci95`; zero
+observed errors do not imply zero real-world error with a small labeled set.
+
+### Optional InsightFace benchmark backend
+
+An isolated SCRFD/ArcFace backend is available for side-by-side evaluation:
+
+```bash
+.venv/bin/pip install -r requirements-insightface.txt
+```
+
+Use [insightface_backend.py](/opt/picorg/insightface_backend.py) only for a
+separate benchmark first. Its model pack has non-commercial research-use
+restrictions; do not replace the default dlib backend until licensing and a
+held-out local benchmark are both approved.
+
+Run the reproducible comparison with:
+
+```bash
+.venv/bin/python insightface_pair_benchmark.py \
+  --pairs /tmp/picorg-labelled-pairs.json \
+  --output /tmp/picorg-face-calibration-insightface.json
+```
+
+After a held-out benchmark approves the model, run a review-only cluster pass
+with `FACE_BACKEND=insightface`; this uses a separate cache and never reuses
+dlib embeddings:
+
+```bash
+FACE_BACKEND=insightface ./run_face_review_pipeline.sh
+```
+
+## Reproducibility and evaluation
+
+The repository includes `pyproject.toml` for reproducible `uv` environments and
+optional face backends. Generate a local Promptfoo regression dataset from
+confirmed pairs without uploading image bytes:
+
+```bash
+.venv/bin/python tools/export_promptfoo_dataset.py \
+  --pairs /tmp/picorg-labelled-pairs.json \
+  --output .cache/promptfoo/face-pairs.jsonl
+```
+
+Each review run also writes a privacy-preserving `*.run-manifest.json` beside
+the audit, including an audit SHA-256, backend, counts, and measured accuracy.
+These manifests are suitable for local OpenTelemetry/Langfuse ingestion while
+keeping image paths and image contents out of remote services.
+
+Check whether a specific run meets all automatic-move gates:
+
+```bash
+.venv/bin/python production_readiness.py \
+  --audit /path/to/audit.json \
+  --preflight /path/to/audit.preflight.json \
+  --benchmark /path/to/face-calibration.json \
+  --ui-token "$PICORG_UI_TOKEN"
+```
+
+The default benchmark gate requires at least 100 genuine and 100 impostor
+pairs and 95% confidence-interval upper bounds no higher than 1% for both FMR
+and FNMR. Override those values only with documented evidence.
+
+For InsightFace, add `--backend insightface --model-license-confirmed` only
+after the model licensing terms have been reviewed for your deployment.
 
 ## Reddit matching order
 

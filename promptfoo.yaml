@@ -1,0 +1,9 @@
+# Optional local evaluation configuration. Generate the dataset with:
+#   .venv/bin/python tools/export_promptfoo_dataset.py \
+#     --pairs /tmp/picorg-labelled-pairs.json \
+#     --output .cache/promptfoo/face-pairs.jsonl
+description: PicOrg face-pair regression checks
+providers:
+  - id: file://evals/promptfoo_face_provider.py
+    label: local-face-matcher
+tests: file://.cache/promptfoo/face-pairs.jsonl

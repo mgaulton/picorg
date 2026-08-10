@@ -5,7 +5,7 @@ def audit(results):
     return {"results": results}
 
 
-def test_reconcile_links_name_and_face_clusters_by_shared_paths():
+def test_reconcile_prioritizes_face_cluster_membership():
     name = audit([
         {"path": "a.jpg", "title": "FB IMG", "canonical": None},
         {"path": "b.jpg", "title": "FB IMG", "canonical": None},
@@ -18,4 +18,6 @@ def test_reconcile_links_name_and_face_clusters_by_shared_paths():
     methods = {item["method"] for item in clusters}
     assert "name+face" in methods
     merged = next(item for item in clusters if item["method"] == "name+face")
-    assert merged["paths"] == ["a.jpg", "b.jpg", "c.jpg"]
+    assert merged["paths"] == ["a.jpg", "c.jpg"]
+    name_only = next(item for item in clusters if item["method"] == "name-only")
+    assert name_only["paths"] == ["b.jpg"]

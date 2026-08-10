@@ -17,6 +17,16 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
+def wilson_interval(successes: int, trials: int, z: float = 1.96) -> list[float]:
+    if trials <= 0:
+        return [0.0, 0.0]
+    proportion = successes / trials
+    denominator = 1 + z * z / trials
+    centre = (proportion + z * z / (2 * trials)) / denominator
+    margin = z * ((proportion * (1 - proportion) / trials + z * z / (4 * trials * trials)) ** 0.5) / denominator
+    return [max(0.0, centre - margin), min(1.0, centre + margin)]
+
+
 def vector_distance(left: Sequence[float], right: Sequence[float]) -> float:
     if len(left) != len(right):
         raise ValueError("embedding dimensions differ")
@@ -58,6 +68,17 @@ def load_pairs(path: Path) -> list[dict[str, Any]]:
     return payload
 
 
+def load_preflight_counts(path: Path | None) -> dict[str, int]:
+    if not path or not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text())
+        counts = payload.get("counts", {})
+        return {str(key): int(value) for key, value in counts.items() if isinstance(value, int)}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
 def evaluate_pairs(pairs: Iterable[Mapping[str, Any]], embeddings: Mapping[str, Sequence[float]], max_fmr: float) -> dict[str, Any]:
     scored = []
     skipped = 0
@@ -88,6 +109,8 @@ def evaluate_pairs(pairs: Iterable[Mapping[str, Any]], embeddings: Mapping[str, 
         })
     eligible = [point for point in operating if point["fmr"] <= max_fmr]
     selected = min(eligible, key=lambda point: (point["fnmr"], point["threshold"]))
+    selected["fmr_ci95"] = wilson_interval(selected["false_matches"], impostor)
+    selected["fnmr_ci95"] = wilson_interval(selected["false_nonmatches"], genuine)
     return {
         "pair_count": len(scored),
         "skipped_pairs": skipped,
@@ -104,11 +127,15 @@ def main() -> int:
     parser.add_argument("--pairs", type=Path, required=True)
     parser.add_argument("--embeddings", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--preflight", type=Path, help="optional preflight report to include as coverage context")
     parser.add_argument("--max-fmr", type=float, default=0.001)
     args = parser.parse_args()
     if not 0 <= args.max_fmr <= 1:
         parser.error("--max-fmr must be between 0 and 1")
     report = evaluate_pairs(load_pairs(args.pairs), load_embeddings(args.embeddings), args.max_fmr)
+    preflight_counts = load_preflight_counts(args.preflight)
+    if preflight_counts:
+        report["preflight_counts"] = preflight_counts
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(rendered)

@@ -1,0 +1,13 @@
+{
+  "decisions": [
+    {
+      "cluster_id": "new_creator",
+      "family": "review",
+      "identity": "new_creator",
+      "notes": "",
+      "saved_at": "2026-08-06T00:57:21.334098+00:00"
+    }
+  ],
+  "schema_version": 1,
+  "updated": "2026-08-06T00:57:21.334165+00:00"
+}

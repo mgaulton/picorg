@@ -53,6 +53,12 @@ def test_embedding_model_id_is_explicit():
     assert matcher.EMBEDDING_MODEL_ID == "dlib-face-recognition-small-v1"
 
 
+def test_load_preflight_summary_reads_counts_only(tmp_path):
+    path = tmp_path / "preflight.json"
+    path.write_text('{"counts": {"candidate": 4, "missing": 2}, "records": ["ignored"]}')
+    assert matcher.load_preflight_summary(path) == {"candidate": 4, "missing": 2}
+
+
 def test_terminal_face_statuses_are_reused_from_cache(tmp_path):
     path = tmp_path / "image.bin"
     path.write_bytes(b"unchanged")

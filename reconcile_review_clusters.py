@@ -38,12 +38,20 @@ def reconcile_clusters(name_audit: Dict[str, Any], face_audit: Dict[str, Any]) -
     face_clusters = build_clusters(face_audit)
     paths: Dict[str, Dict[str, str]] = {}
     disjoint = DisjointSet()
-    for prefix, clusters in (("name", name_clusters), ("face", face_clusters)):
-        for cluster in clusters:
-            node = f"{prefix}:{cluster['cluster_id']}"
-            disjoint.add(node)
-            for path in cluster["paths"]:
-                paths.setdefault(path, {})[prefix] = node
+    # Face clusters define review membership. Name clusters are attached as
+    # context only and must not merge otherwise-distinct face clusters.
+    for cluster in face_clusters:
+        node = f"face:{cluster['cluster_id']}"
+        disjoint.add(node)
+        for path in cluster["paths"]:
+            paths.setdefault(path, {})["face"] = node
+            disjoint.union(node, f"path:{path}")
+    for cluster in name_clusters:
+        node = f"name:{cluster['cluster_id']}"
+        disjoint.add(node)
+        for path in cluster["paths"]:
+            paths.setdefault(path, {})["name"] = node
+            if "face" not in paths[path]:
                 disjoint.union(node, f"path:{path}")
 
     components: Dict[str, Dict[str, Any]] = {}

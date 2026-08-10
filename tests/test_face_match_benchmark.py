@@ -1,6 +1,12 @@
 import face_match_benchmark as benchmark
 
 
+def test_load_preflight_counts_is_bounded(tmp_path):
+    path = tmp_path / "preflight.json"
+    path.write_text('{"counts": {"candidate": 12, "missing": 3}, "records": ["not loaded"]}')
+    assert benchmark.load_preflight_counts(path) == {"candidate": 12, "missing": 3}
+
+
 def test_selects_lowest_fnmr_under_false_match_budget():
     embeddings = {
         "a": [0.0, 0.0],
@@ -20,6 +26,8 @@ def test_selects_lowest_fnmr_under_false_match_budget():
     )
     assert report["selected"]["fmr"] == 0
     assert report["selected"]["fnmr"] == 0
+    assert report["selected"]["fmr_ci95"][1] > 0
+    assert report["selected"]["fnmr_ci95"][1] > 0
 
 
 def test_skips_pairs_without_cached_embeddings():

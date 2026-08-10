@@ -1,0 +1,54 @@
+{
+  "decisions": [
+    {
+      "aliases": [],
+      "cluster_id": "3c09fbff3a296007",
+      "count": 13,
+      "family": "manual",
+      "identity": "fayereagan",
+      "notes": "",
+      "sample_paths": [
+        "/mnt/elements16/@mixedpics/Penthouse photo set (1).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (10).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (11).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (12).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (2).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (3).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (4).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (5).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (6).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (7).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (8).jpg",
+        "/mnt/elements16/@mixedpics/Penthouse photo set (9).jpg"
+      ],
+      "saved_at": "2026-07-31T18:46:47.466775+00:00",
+      "status": "confirmed"
+    },
+    {
+      "aliases": [],
+      "cluster_id": "9d450f10582fe796",
+      "count": 13,
+      "family": "manual",
+      "identity": "giannamichaels",
+      "notes": "",
+      "sample_paths": [
+        "/mnt/elements16/@mixedpics/Naked Glory (1).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (10).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (11).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (12).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (2).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (3).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (4).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (5).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (6).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (7).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (8).png",
+        "/mnt/elements16/@mixedpics/Naked Glory (9).png"
+      ],
+      "saved_at": "2026-07-31T18:47:20.077321+00:00",
+      "status": "confirmed"
+    }
+  ],
+  "schema_version": 1,
+  "updated": "2026-07-31T18:47:20.077395+00:00"
+}

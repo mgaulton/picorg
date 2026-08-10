@@ -68,6 +68,14 @@ def test_decision_is_saved_and_media_is_allowlisted(tmp_path):
     assert detail["image_decisions"][image_path]["identity"] == "new_creator"
 
 
+def test_ui_token_protects_non_health_endpoints(tmp_path):
+    client = review_ui.create_app(audit_payload(tmp_path), tmp_path / "decisions.json", ui_token="secret").test_client()
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/api/summary").status_code == 401
+    assert client.get("/api/summary", headers={"X-Picorg-Token": "secret"}).status_code == 200
+    assert client.get("/api/summary", headers={"Authorization": "Bearer secret"}).status_code == 200
+
+
 def test_export_promotes_confirmed_only(tmp_path):
     registry = tmp_path / "registry.json"
     registry.write_text(json.dumps({"entries": []}), encoding="utf-8")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -244,6 +245,7 @@ def create_app(
     overrides_path: Path = DEFAULT_OVERRIDES,
     image_decisions_path: Path = DEFAULT_IMAGE_DECISIONS,
     review_identities_path: Path = DEFAULT_REVIEW_IDENTITIES,
+    ui_token: str | None = None,
 ) -> Flask:
     payload = load_audit(audit_path)
     clusters = load_cluster_index(audit_path)
@@ -257,11 +259,20 @@ def create_app(
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+    configured_token = ui_token if ui_token is not None else os.environ.get("PICORG_UI_TOKEN", "")
     write_lock = threading.RLock()
 
     @app.before_request
     def request_context() -> None:
         g.request_id = request.headers.get("X-Request-ID", "")[:80] or uuid.uuid4().hex
+        if configured_token and request.path not in {"/healthz", "/readyz"}:
+            supplied = request.headers.get("X-Picorg-Token", "") or request.headers.get("Authorization", "")
+            if supplied.startswith("Bearer "):
+                supplied = supplied[7:]
+            if not hmac.compare_digest(supplied, configured_token):
+                from flask import abort
+
+                abort(401, description="valid X-Picorg-Token or Bearer token required")
 
     @app.after_request
     def response_headers(response):
@@ -561,12 +572,20 @@ def main() -> int:
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--host", default=DEFAULT_HOST, help="bind address; use 127.0.0.1 for local-only access")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--token", default=None, help="protect UI/API with a token; prefer PICORG_UI_TOKEN")
     args = parser.parse_args()
     if args.export_registry:
         print(f"promoted {export_confirmed_decisions(args.decisions, args.registry)} confirmed decisions")
         return 0
     audit_path = args.audit or latest_audit()
-    create_app(audit_path, args.decisions, DEFAULT_OVERRIDES, args.image_decisions, args.review_identities).run(host=args.host, port=args.port, debug=False)
+    create_app(
+        audit_path,
+        args.decisions,
+        DEFAULT_OVERRIDES,
+        args.image_decisions,
+        args.review_identities,
+        ui_token=args.token,
+    ).run(host=args.host, port=args.port, debug=False)
     return 0
 
 

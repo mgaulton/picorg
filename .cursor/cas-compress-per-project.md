@@ -1,0 +1,1 @@
+/opt/cursorwrapperscreen/mcp/examples/per-project/README.md

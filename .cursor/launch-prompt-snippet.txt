@@ -1,0 +1,85 @@
+# Agent workbench export (fallback — prefer handoff.json)
+
+project: /opt/picorg
+generated: 2026-08-04T17:23:28Z
+
+## handoff.json (primary)
+{
+  "schema_version": 2,
+  "work_id": "picorg",
+  "status": "active",
+  "updated": "2026-08-04T17:23:28Z",
+  "agent_last": "bootstrap",
+  "autonomous_mode": true,
+  "goal": "Provide a deterministic organizer for mixed Reddit media intake with dry-run accuracy analysis, a repeatable periodic workflow, and a repo-local overlay registry.",
+  "next_action": "Create a labelled genuine/impostor pair file from reviewed images and run face_match_benchmark.py against the completed embedding cache.",
+  "do_not": [
+    "Do not initialize a replacement repository or guess a remote URL."
+  ],
+  "attempt_count": 0,
+  "max_build_attempts": 3,
+  "last_error_class": "",
+  "context_files": [
+    "docs/agent-workbench/handoff.json",
+    "docs/agent-workbench/WORK.md",
+    ".cursor/agent-slice-policy.json"
+  ]
+}
+
+## Switch status
+project: /opt/picorg
+work_id: picorg
+agent_last: bootstrap
+status: active
+goal: Provide a deterministic organizer for mixed Reddit media intake with dry-run accuracy analysis, a repeatable periodic workflow, and a repo-local overlay registry.
+next_action: Create a labelled genuine/impostor pair file from reviewed images and run face_match_benchmark.py against the completed embedding cache.
+attempt_count: 0
+do_not: Do not initialize a replacement repository or guess a remote URL.
+surfaces: WORK.md=ok, handoff.json=ok, export=ok, GEMINI.md=ok, .github/copilot-instructions.md=missing
+global_clients: .codex/config.toml=ok, .claude/CLAUDE.md=ok
+parity: missing
+
+## Fleet active work (AI-Memory global)
+
+## WORK.md (bounded)
+# Work: picorg
+
+work_id: picorg
+updated: 2026-07-31
+agent_last: codex
+spec_kit: <optional — link or path to spec/plan/tasks when multi-step>
+
+## Goal
+
+Build a deterministic organizer that can resolve mixed Reddit media into canonical identity folders, support dry-run matching, report accuracy, and provide a repeatable periodic workflow with a repo-local overlay registry.
+
+## Spec (what — Spec Kit)
+
+User-facing requirements only. No implementation detail.
+
+- Problem / user story
+- Acceptance criteria (testable)
+- Out of scope
+
+## Plan (how — Spec Kit)
+
+Technical approach after spec is stable.
+
+- Architecture / components touched
+- Data flow or API contracts
+- Risks and mitigations
+
+## Tasks (do — Spec Kit)
+
+Ordered, checkable items. One agent turn ≈ one task when possible.
+
+- [ ] Task 1
+- [ ] Task 2
+
+## State
+
+- Finished: `picorg_sorter.py` implements identity catalog loading, dry-run matching, manifest export, and optional apply mode.
+- Finished: Reddit-context parsing now boosts explicit `r/` and `u/` markers plus title hints.
+- Finished: apply mode preserves intact folders where possible and routes exact duplicate folders into `duplicates/`.
+- Finished: `README.md` documents sources, usage, and current dry-run metrics.
+- Finished: `RUNBOOK.md`, `OPERATING_POLICY.md`, and `picor

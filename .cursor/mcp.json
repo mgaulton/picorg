@@ -1,0 +1,65 @@
+{
+  "mcpServers": {
+    "cas-compress": {
+      "command": "/opt/cursorwrapperscreen/mcp/cas-compress-mcp",
+      "args": [],
+      "env": {
+        "CAS_MCP_TRANSPORT": "stdio",
+        "CAS_COMPRESS_MAX_LINES": "80",
+        "CAS_COMPRESS_HEAD_LINES": "20",
+        "CAS_COMPRESS_TAIL_LINES": "20",
+        "CAS_COMPRESS_MAX_BYTES": "16000",
+        "CAS_COMPRESS_MAX_LINE_LENGTH": "800",
+        "CAS_COMPRESS_MAX_TOKENS": "3500",
+        "CAS_COMPRESS_CHUNK_MODE": "paragraph",
+        "CAS_COMPRESS_FOCUS_KEYWORDS": "error,Traceback,FAIL,timeout,FAILED,AssertionError,pytest,selenium,chromedriver,WebDriver,backfill,download,HTTP,429,ConnectionError,rate limit,circuit,recovery,maintenance,IntegrityError,sqlite,npm,yarn,pnpm,gradle,maven,WARNING,ERROR",
+        "CAS_COMPRESS_FOCUS_MAX_LINES": "24",
+        "CAS_COMPRESS_DEDUP_CONSECUTIVE": "1",
+        "CAS_COMPRESS_COLLAPSE_BLANKS": "1",
+        "CAS_COMPRESS_COLLAPSE_STACK": "1",
+        "CAS_COMPRESS_ROUTER": "1",
+        "CAS_COMPRESS_FOCUS_KEYWORDS_LOG": "Traceback,FAILED,ERROR,AssertionError,pytest,npm ERR,cargo,error[E",
+        "CAS_COMPRESS_FOCUS_KEYWORDS_DIFF": "+++ ,--- ,@@ ,diff --git",
+        "CAS_COMPRESS_FOCUS_KEYWORDS_JSON": "error,message,code,status",
+        "CAS_COMPRESS_FOCUS_KEYWORDS_SEARCH": "",
+        "CAS_COMPRESS_STATS": "when_truncated",
+        "CAS_COMPRESS_STATS_COMPACT": "1",
+        "CAS_CCR_ENABLED": "1",
+        "CAS_CCR_TTL_SECONDS": "3600",
+        "CAS_CCR_MAX_ENTRIES": "200",
+        "CAS_MCP_TIMEOUT": "300",
+        "CAS_MCP_MAX_TIMEOUT_PER_CALL": "7200",
+        "CAS_MCP_MAX_COMMAND_CHARS": "1048576",
+        "CAS_MCP_READ_MAX_BYTES": "262144",
+        "CAS_MCP_SUBPROCESS_ENV": "inherit",
+        "CAS_MCP_MAX_CALLS_PER_MINUTE": "0",
+        "CAS_MCP_AUDIT_LOG": "/var/log/cursorwrapperscreen/cas-mcp-audit.jsonl",
+        "CAS_MCP_AUDIT_MAX_BYTES": "52428800",
+        "CAS_MCP_AUDIT_ROTATE_FILES": "5"
+      }
+    },
+    "gitnexus": {
+      "command": "/opt/cursorwrapperscreen/mcp/.venv/bin/mcp-watchdog",
+      "args": [
+        "--verbose",
+        "--",
+        "gitnexus",
+        "mcp"
+      ],
+      "env": {}
+    },
+    "ai_memory": {
+      "command": "/OneDrive/AI-Memory/tools/ai-memory-mcp",
+      "args": [],
+      "env": {
+        "AI_MEMORY_ROOT": "/opt/picorg",
+        "AI_MEMORY_GLOBAL_DATA_DIR": "/opt/picorg/global",
+        "AI_MEMORY_MEMORY_GRAPH_DB": "/opt/picorg/global/memory_graph.sqlite3",
+        "AI_MEMORY_PREDICTIVE_PRELOAD": "0"
+      }
+    },
+    "prompt-optimizer": {
+      "url": "http://127.0.0.1:18101/mcp"
+    }
+  }
+}
