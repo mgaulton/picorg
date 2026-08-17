@@ -5,15 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch-dir", type=Path, default=Path("/tmp"))
-    parser.add_argument("--audit", type=Path, default=Path("/tmp/picorg_periodic_apply.json"))
-    parser.add_argument("--output", type=Path, default=Path("/tmp/picorg_face_grouping_reconciled.json"))
+    temp_root = Path(tempfile.gettempdir())
+    parser.add_argument("--batch-dir", type=Path, default=temp_root)
+    parser.add_argument("--audit", type=Path, default=temp_root / "picorg_periodic_apply.json")
+    parser.add_argument("--output", type=Path, default=temp_root / "picorg_face_grouping_reconciled.json")
     args = parser.parse_args()
 
     audit = json.loads(args.audit.read_text(encoding="utf-8"))

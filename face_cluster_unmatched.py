@@ -34,9 +34,17 @@ def file_fingerprint(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def load_unmatched_paths(audit_path: Path) -> List[Dict[str, Any]]:
+def load_unmatched_paths(audit_path: Path, preflight_path: Path | None = None) -> List[Dict[str, Any]]:
     payload = json.loads(audit_path.read_text(encoding="utf-8"))
-    return [item for item in payload.get("results", []) if isinstance(item, dict) and not item.get("canonical") and item.get("path")]
+    items = [item for item in payload.get("results", []) if isinstance(item, dict) and not item.get("canonical") and item.get("path")]
+    if not preflight_path or not preflight_path.is_file():
+        return items
+    try:
+        preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+        statuses = {str(row.get("path")): row.get("status") for row in preflight.get("records", []) if isinstance(row, dict)}
+        return [item for item in items if statuses.get(str(item["path"]), "candidate") == "candidate"]
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return items
 
 
 def load_preflight_summary(path: Path) -> Dict[str, int]:
@@ -125,6 +133,8 @@ def extract_embeddings(
     cache_path: Path | None = None,
     checkpoint_every: int = 500,
     checkpoint_seconds: float = 300.0,
+    preflight_path: Path | None = None,
+    upsample_times: int = 1,
 ) -> Tuple[List[Tuple[str, List[float]]], Dict[str, Any]]:
     """Extract one usable face embedding per unmatched image.
 
@@ -133,13 +143,16 @@ def extract_embeddings(
     """
     records: List[Tuple[str, List[float]]] = []
     stats: Dict[str, Any] = {"selected": 0, "embedded": 0, "cached": 0, "no_face": 0, "multi_face_deferred": 0, "low_quality": 0, "errors": 0, "error_categories": {}, "error_samples": []}
-    items = load_unmatched_paths(audit_path)
+    items = load_unmatched_paths(audit_path, preflight_path)
     total = min(len(items), max_images) if max_images else len(items)
     cached_records: Dict[str, Any] = {}
+    extraction_config = {"upsample_times": upsample_times, "num_jitters": num_jitters}
     if cache_path and cache_path.is_file():
         try:
             cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
-            if cached_payload.get("model_id") in (None, EMBEDDING_MODEL_ID):
+            cache_config = cached_payload.get("extraction_config")
+            config_compatible = cache_config == extraction_config or (cache_config is None and extraction_config == {"upsample_times": 1, "num_jitters": 1})
+            if cached_payload.get("model_id") in (None, EMBEDDING_MODEL_ID) and config_compatible:
                 cached_records = cached_payload.get("records", {})
                 if cached_payload.get("model_id") is None:
                     print("face extraction: accepting legacy cache and upgrading metadata", flush=True)
@@ -164,7 +177,7 @@ def extract_embeddings(
         if not cache_path:
             return
         audit_stat = audit_path.stat()
-        _atomic_write(cache_path, {"schema_version": 2, "model_id": EMBEDDING_MODEL_ID, "detector": "small", "audit": {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}, "records": cached_records, "progress": stats})
+        _atomic_write(cache_path, {"schema_version": 2, "model_id": EMBEDDING_MODEL_ID, "detector": "small", "extraction_config": extraction_config, "audit": {"mtime_ns": audit_stat.st_mtime_ns, "size": audit_stat.st_size}, "records": cached_records, "progress": stats})
         last_checkpoint = time.monotonic()
         print(f"face extraction: checkpoint saved to {cache_path}", flush=True)
     for item in items:
@@ -208,7 +221,7 @@ def extract_embeddings(
             raise RuntimeError("face clustering requires face_recognition and numpy; install requirements-face.txt") from exc
         try:
             image = load_rgb_image(path)
-            locations = face_recognition.face_locations(image, model="small")
+            locations = face_recognition.face_locations(image, number_of_times_to_upsample=upsample_times, model="small")
             if not locations:
                 stats["no_face"] += 1
                 cached_records[str(path)] = {"fingerprint": fingerprint, "status": "no_face"}
@@ -247,11 +260,12 @@ def extract_embeddings_insightface(
     max_images: int = 0,
     cache_path: Path | None = None,
     checkpoint_every: int = 500,
+    preflight_path: Path | None = None,
 ) -> Tuple[List[Tuple[str, List[float]]], Dict[str, Any]]:
     """Extract embeddings with the optional InsightFace backend."""
     from insightface_backend import InsightFaceBackend, MODEL_ID
 
-    items = load_unmatched_paths(audit_path)
+    items = load_unmatched_paths(audit_path, preflight_path)
     total = min(len(items), max_images) if max_images else len(items)
     records: List[Tuple[str, List[float]]] = []
     stats: Dict[str, Any] = {"selected": 0, "embedded": 0, "cached": 0, "no_face": 0, "multi_face_deferred": 0, "low_quality": 0, "errors": 0, "error_categories": {}, "error_samples": []}
@@ -309,15 +323,16 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, help="embedding cache for safe resume")
     parser.add_argument("--checkpoint-every", type=int, default=500)
     parser.add_argument("--checkpoint-seconds", type=float, default=300.0)
+    parser.add_argument("--upsample-times", type=int, default=1, help="dlib detector upsampling; 0 is faster, 1 may find smaller faces")
     args = parser.parse_args()
     preflight_path = args.preflight or args.audit.with_name(f"{args.audit.stem}.preflight.json")
     preflight_counts = load_preflight_summary(preflight_path)
     cache_path = args.cache or args.output.with_suffix(".embeddings.json")
     if args.backend == "insightface":
-        records, stats = extract_embeddings_insightface(args.audit, args.max_images, cache_path, args.checkpoint_every)
+        records, stats = extract_embeddings_insightface(args.audit, args.max_images, cache_path, args.checkpoint_every, preflight_path)
         model_id = "insightface-buffalo_l-scrfd-arcface"
     else:
-        records, stats = extract_embeddings(args.audit, args.max_images, args.min_face_pixels, args.min_face_area_ratio, args.allow_multi_face, args.num_jitters, cache_path, args.checkpoint_every, args.checkpoint_seconds)
+        records, stats = extract_embeddings(args.audit, args.max_images, args.min_face_pixels, args.min_face_area_ratio, args.allow_multi_face, args.num_jitters, cache_path, args.checkpoint_every, args.checkpoint_seconds, preflight_path, args.upsample_times)
         model_id = EMBEDDING_MODEL_ID
     clusters = cluster_embeddings(records, args.threshold)
     results = [
@@ -329,7 +344,17 @@ def main() -> int:
     if preflight_counts:
         report["preflight"] = {"path": str(preflight_path), "counts": preflight_counts}
         report["preflight_candidates"] = preflight_counts.get("candidate", 0)
-    payload = {"schema_version": 2, "source": "face_embedding_cluster", "model_id": model_id, "detector": "scrfd" if args.backend == "insightface" else "small", "threshold": args.threshold, "report": report, "results": results}
+    payload = {
+        "schema_version": 2,
+        "source": "face_embedding_cluster",
+        "model_id": model_id,
+        "detector": "scrfd" if args.backend == "insightface" else "small",
+        "upsample_times": args.upsample_times if args.backend == "dlib" else None,
+        "num_jitters": args.num_jitters if args.backend == "dlib" else None,
+        "threshold": args.threshold,
+        "report": report,
+        "results": results,
+    }
     _atomic_write(args.output, payload)
     print(json.dumps({**report, "output": str(args.output)}, sort_keys=True))
     return 0

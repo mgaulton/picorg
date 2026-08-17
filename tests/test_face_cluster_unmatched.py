@@ -72,6 +72,22 @@ def test_terminal_face_statuses_are_reused_from_cache(tmp_path):
     assert stats["no_face"] == 1
 
 
+def test_embedding_cache_config_mismatch_is_not_reused(tmp_path):
+    path = tmp_path / "image.bin"
+    path.write_bytes(b"unchanged")
+    audit = tmp_path / "audit.json"
+    audit.write_text('{"results": [{"path": "' + str(path) + '"}]}')
+    fingerprint = matcher.file_fingerprint(path)
+    cache = tmp_path / "cache.json"
+    cache.write_text(
+        '{"model_id": "' + matcher.EMBEDDING_MODEL_ID + '", "extraction_config": {"upsample_times": 0, "num_jitters": 1}, '
+        '"records": {"' + str(path) + '": {"fingerprint": "' + fingerprint + '", "status": "no_face"}}}'
+    )
+    _, stats = matcher.extract_embeddings(audit, cache_path=cache)
+    assert stats["cached"] == 0
+    assert stats["errors"] == 1
+
+
 def test_load_rgb_image_rejects_invalid_image_data(tmp_path):
     path = tmp_path / "invalid.jpg"
     path.write_bytes(b'c"not-a-jpeg')

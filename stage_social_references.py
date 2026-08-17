@@ -7,6 +7,7 @@ import argparse
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tif", ".tiff"}
@@ -18,7 +19,7 @@ def safe(value: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=Path("/tmp/photo_reorg_social_references"))
+    parser.add_argument("--output", type=Path, default=Path(tempfile.gettempdir()) / "photo_reorg_social_references")
     parser.add_argument("--per-identity", type=int, default=10)
     parser.add_argument("roots", nargs="+", type=Path)
     args = parser.parse_args()

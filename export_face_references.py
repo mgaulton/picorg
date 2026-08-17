@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -30,7 +31,7 @@ def safe_name(value: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("audit", type=Path)
-    parser.add_argument("--output", type=Path, default=Path("/tmp/picorg_face_references"))
+    parser.add_argument("--output", type=Path, default=Path(tempfile.gettempdir()) / "picorg_face_references")
     parser.add_argument("--per-identity", type=int, default=20)
     parser.add_argument("--min-confidence", type=float, default=0.98)
     parser.add_argument("--include-contains", action="store_true")

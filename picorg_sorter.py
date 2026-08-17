@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict
 from functools import lru_cache
@@ -40,9 +41,10 @@ PROTECTED_SOURCE_ROOTS = (
 )
 
 DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
-DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
-DEFAULT_CATALOG_CACHE = Path("/tmp/picorg_identity_catalog_cache.json")
-DEFAULT_DRY_RUN_CACHE = Path("/tmp/picorg_dry_run_cache.json")
+DEFAULT_TEMP_ROOT = Path(tempfile.gettempdir())
+DEFAULT_AUDIT_ROOT = DEFAULT_TEMP_ROOT / "picorg_sorted_audit"
+DEFAULT_CATALOG_CACHE = DEFAULT_TEMP_ROOT / "picorg_identity_catalog_cache.json"
+DEFAULT_DRY_RUN_CACHE = DEFAULT_TEMP_ROOT / "picorg_dry_run_cache.json"
 DEFAULT_RESOLVER_VERSION = "2026-07-31.26"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85

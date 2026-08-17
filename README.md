@@ -11,7 +11,7 @@ Deterministic organizer for mixed Reddit media intake.
 - Uses Reddit context when available: subreddit, author, title, filename, and aliases.
 - On apply, intact source folders are moved where possible, identical folder content is routed to `duplicates/`, and same-name collisions get a hashed filename.
 - Uses a repo-local overlay registry in [`project_registry.json`](/opt/picorg/project_registry.json) for project-only aliases and blocked generic tokens.
-- `run_media_pipeline.sh` can sequence remote intake, picorg dry-run/apply, and the photo_reorg dry-run; intake and apply are opt-in.
+- `run_picorg.sh` is the recommended one-command baseline: it refreshes intake, runs hash-priority dedupe, creates the PicOrg audit, performs face grouping, and starts the LAN review UI. The default does not move library files.
 - `/mnt/elements16a/Pron/metadaily` and `/mnt/elements16a/Pron/redditdaily` are permanently separate protected source stores. They may be read for identity/profile references, but ingest, dedupe, and picorg apply never move or modify them.
 - Generic unmatched clusters can be sampled through `face_group_unmatched.py`; it uses the high-accuracy face DB to produce report-only identity groups for review before aliases or apply decisions.
 - Apply mode skips matches below `0.95` confidence and reports them for review.
@@ -55,13 +55,30 @@ See [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md) for the manual work
 
 ## Usage
 
-For the staged end-to-end workflow:
+For the conservative end-to-end workflow:
 
 ```bash
-/opt/picorg/run_media_pipeline.sh
+./run_picorg.sh
 ```
 
-Add `--ingest` to run `/opt/move_downloads_remote.sh`, `--apply` to apply picorg moves, and omit neither unless the preceding dry-run is acceptable.
+For an interactive menu with the same safe defaults and explicit confirmation
+for mutating actions:
+
+```bash
+./run_picorg_menu.sh
+```
+
+Useful deliberate variants:
+
+```bash
+./run_picorg.sh --dry-run                      # no intake, moves, or quarantine
+./run_picorg.sh --no-ingest --reuse-faces       # open the latest complete face audit
+./run_picorg.sh --apply-high-confidence         # safety-gated name moves + face review
+./run_picorg.sh --dedupe-apply                  # quarantine exact target duplicates
+```
+
+The lower-level `run_media_pipeline.sh` and `run_face_review_pipeline.sh`
+remain available for debugging and individual stages.
 
 Dry run:
 
@@ -239,8 +256,9 @@ and starts the review UI on all LAN interfaces:
 It defaults to `HOST=0.0.0.0`, `PORT=8787`, skips `photo_reorg`, and never
 applies organizer moves. Override `PORT` or set `HOST=127.0.0.1` for local-only
 access.
-For LAN exposure, set `PICORG_UI_TOKEN` and send it as `X-Picorg-Token` (or a
-Bearer token); health probes remain unauthenticated.
+Authentication is disabled by default. To enable it explicitly, set both
+`PICORG_UI_AUTH=1` and `PICORG_UI_TOKEN`; clients then send `X-Picorg-Token`
+(or a Bearer token). Health probes remain unauthenticated.
 
 Add `--ingest` when incoming files should be fetched first:
 
@@ -266,12 +284,39 @@ Subsequent starts reuse the cached face audit. Set `FORCE_FACE_REBUILD=1` after
 changing the source audit. Face embeddings are checkpointed every 500 images in
 `*.face-embeddings.json`, keyed by path and SHA-256 file fingerprint; unchanged
 files reuse their encodings while replaced/modified files are rescanned.
-Stopping and rerunning resumes completed work. The
+Stopping and rerunning resumes completed work.
+
+To launch immediately without extracting faces again, point `AUDIT` at the
+same source audit and reuse its existing face-cluster report:
+
+```bash
+AUDIT=/path/to/audit.json \
+FACE_AUDIT=/path/to/audit.face-clusters.json \
+USE_EXISTING_FACE_AUDIT=1 \
+PICORG_UI_TOKEN='use-a-long-random-secret' ./runweb.sh
+```
+
+When `AUDIT` and `FACE_AUDIT` are omitted in reuse mode, `runweb.sh` selects
+the newest primary audit that has a non-empty companion face-cluster report.
+
+This mode refuses to start if the face-cluster report is absent or empty.
+The
 script writes a reconciled audit and starts the LAN UI against it. It is a similarity candidate
 queue, not identity confirmation: multi-face/low-quality images are deferred,
 and no face result is exported automatically. Within a cluster, select several
 images and use “Assign selected to identity”; type a new identity and use “Save
 typed identity as new” to record it in the separate review identity ledger.
+
+### Face extraction speed
+
+Extraction is resumable and now skips files already classified by preflight as
+missing, corrupt, unsupported, or oversized. Keep `num-jitters=1` for normal
+operation, reuse the embedding cache, and benchmark `FACE_BACKEND=insightface`
+separately; the current CPU benchmark was about 2.2× faster than dlib, but it
+requires independent accuracy and model-license approval.
+For accuracy-priority production runs, retain the default dlib
+`--upsample-times 1`. A value of `0` is a speed benchmark only and must not be
+used for automatic moves without a held-out recall comparison.
 When name and face groupings disagree, face-cluster membership drives the
 review cluster; name titles remain supporting context instead of merging faces.
 
@@ -396,6 +441,36 @@ dlib embeddings:
 ```bash
 FACE_BACKEND=insightface ./run_face_review_pipeline.sh
 ```
+
+### Optional UniFace benchmark backend
+
+UniFace can be evaluated locally without changing the production cache. Install
+it in an isolated environment (its model downloads are separate from `.venv`):
+
+```bash
+uv venv /tmp/picorg-uniface-venv --python 3.11
+UV_CACHE_DIR=/tmp/picorg-uv-cache uv pip install \
+  --python /tmp/picorg-uniface-venv/bin/python -r requirements-uniface.txt
+```
+
+Build labeled pairs from review decisions, then compare ArcFace (the default)
+or AdaFace embeddings:
+
+```bash
+./.venv/bin/python build_face_pairs.py \
+  --decisions review_decisions.json \
+  --embeddings .cache/picorg/20260802T004521Z.face-embeddings.json \
+  --output /tmp/picorg-labelled-pairs.json
+/tmp/picorg-uniface-venv/bin/python uniface_pair_benchmark.py \
+  --pairs /tmp/picorg-labelled-pairs.json \
+  --backend adaface \
+  --output /tmp/picorg-face-calibration-uniface.json
+```
+
+This is benchmark-only until a sufficiently large held-out set confirms error
+bounds and the individual model licenses are approved. UniFace itself is MIT,
+but its bundled model choices have separate licenses; do not treat a good small
+pair score as production evidence.
 
 ## Reproducibility and evaluation
 

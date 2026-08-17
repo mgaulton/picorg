@@ -29,7 +29,7 @@ import picorg_sorter as sorter
 LOGGER = logging.getLogger(__name__)
 
 
-DEFAULT_AUDIT_ROOT = Path("/tmp/picorg_sorted_audit")
+DEFAULT_AUDIT_ROOT = Path(tempfile.gettempdir()) / "picorg_sorted_audit"
 DEFAULT_DECISIONS = Path("/opt/picorg/review_decisions.json")
 DEFAULT_IMAGE_DECISIONS = Path("/opt/picorg/review_image_decisions.json")
 DEFAULT_REVIEW_IDENTITIES = Path("/opt/picorg/review_identities.json")
@@ -37,7 +37,8 @@ MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".
 FAMILIES = {"manual", "metadaily", "reddit_follow", "reddit_subreddit", "pscrape", "review"}
 DECISION_STATUSES = {"pending", "confirmed", "rejected", "needs-evidence"}
 DEFAULT_REGISTRY = Path("/opt/picorg/project_registry.json")
-DEFAULT_HOST = "0.0.0.0"
+# LAN exposure is an explicit deployment requirement; override HOST for local-only use.
+DEFAULT_HOST = "0.0.0.0"  # nosec B104
 DEFAULT_PORT = 8787
 DEFAULT_OVERRIDES = Path("/opt/picorg/review_overrides.json")
 
@@ -259,7 +260,8 @@ def create_app(
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
-    configured_token = ui_token if ui_token is not None else os.environ.get("PICORG_UI_TOKEN", "")
+    auth_enabled = os.environ.get("PICORG_UI_AUTH", "0") == "1" or ui_token is not None
+    configured_token = (ui_token if ui_token is not None else os.environ.get("PICORG_UI_TOKEN", "")) if auth_enabled else ""
     write_lock = threading.RLock()
 
     @app.before_request

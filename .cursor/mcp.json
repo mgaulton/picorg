@@ -52,14 +52,11 @@
       "command": "/OneDrive/AI-Memory/tools/ai-memory-mcp",
       "args": [],
       "env": {
-        "AI_MEMORY_ROOT": "/opt/picorg",
-        "AI_MEMORY_GLOBAL_DATA_DIR": "/opt/picorg/global",
-        "AI_MEMORY_MEMORY_GRAPH_DB": "/opt/picorg/global/memory_graph.sqlite3",
+        "AI_MEMORY_ROOT": "/OneDrive/AI-Memory",
+        "AI_MEMORY_GLOBAL_DATA_DIR": "/var/lib/ai-memory/global",
+        "AI_MEMORY_MEMORY_GRAPH_DB": "/var/lib/ai-memory/global/memory_graph.sqlite3",
         "AI_MEMORY_PREDICTIVE_PRELOAD": "0"
       }
-    },
-    "prompt-optimizer": {
-      "url": "http://127.0.0.1:18101/mcp"
     }
   }
 }

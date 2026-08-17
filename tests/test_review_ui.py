@@ -76,6 +76,13 @@ def test_ui_token_protects_non_health_endpoints(tmp_path):
     assert client.get("/api/summary", headers={"Authorization": "Bearer secret"}).status_code == 200
 
 
+def test_environment_token_is_ignored_when_auth_is_not_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("PICORG_UI_TOKEN", "secret")
+    monkeypatch.delenv("PICORG_UI_AUTH", raising=False)
+    client = review_ui.create_app(audit_payload(tmp_path), tmp_path / "decisions.json").test_client()
+    assert client.get("/api/summary").status_code == 200
+
+
 def test_export_promotes_confirmed_only(tmp_path):
     registry = tmp_path / "registry.json"
     registry.write_text(json.dumps({"entries": []}), encoding="utf-8")

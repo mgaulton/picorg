@@ -1,43 +1,80 @@
 # Agent workbench export (fallback — prefer handoff.json)
 
 project: /opt/picorg
-generated: 2026-08-04T17:23:28Z
+generated: 2026-08-16T21:03:27Z
 
 ## handoff.json (primary)
+kanban: todo  review_required: False  branch: main
+worktree: /opt/picorg
 {
   "schema_version": 2,
   "work_id": "picorg",
   "status": "active",
-  "updated": "2026-08-04T17:23:28Z",
+  "updated": "2026-08-16T21:03:27Z",
   "agent_last": "bootstrap",
   "autonomous_mode": true,
   "goal": "Provide a deterministic organizer for mixed Reddit media intake with dry-run accuracy analysis, a repeatable periodic workflow, and a repo-local overlay registry.",
-  "next_action": "Create a labelled genuine/impostor pair file from reviewed images and run face_match_benchmark.py against the completed embedding cache.",
+  "next_action": "Generate a larger held-out Promptfoo dataset from confirmed review pairs and calibrate dlib versus InsightFace thresholds.",
   "do_not": [
     "Do not initialize a replacement repository or guess a remote URL."
   ],
   "attempt_count": 0,
   "max_build_attempts": 3,
   "last_error_class": "",
+  "kanban": "todo",
+  "worktree_path": "/opt/picorg",
+  "branch": "main",
+  "review_required": false,
+  "review_comments": [],
+  "touch_paths": [],
   "context_files": [
     "docs/agent-workbench/handoff.json",
     "docs/agent-workbench/WORK.md",
+    "docs/agent-workbench/BOARD.md",
+    "docs/agent-workbench/cards.json",
     ".cursor/agent-slice-policy.json"
   ]
 }
 
-## Switch status
-project: /opt/picorg
-work_id: picorg
-agent_last: bootstrap
-status: active
-goal: Provide a deterministic organizer for mixed Reddit media intake with dry-run accuracy analysis, a repeatable periodic workflow, and a repo-local overlay registry.
-next_action: Create a labelled genuine/impostor pair file from reviewed images and run face_match_benchmark.py against the completed embedding cache.
-attempt_count: 0
-do_not: Do not initialize a replacement repository or guess a remote URL.
-surfaces: WORK.md=ok, handoff.json=ok, export=ok, GEMINI.md=ok, .github/copilot-instructions.md=missing
-global_clients: .codex/config.toml=ok, .claude/CLAUDE.md=ok
-parity: missing
+## BOARD.md (bounded)
+# Agent kanban
+
+Generated: 2026-08-16T21:03:27Z
+
+Borrowed from Vibe Kanban columns (todo → done). Lifecycle `status` remains `active|blocked|done|stale`.
+
+This repo: `picorg` · lifecycle `active` · kanban `todo`
+
+## todo
+
+- **picorg**: Generate a larger held-out Promptfoo dataset from confirmed review pairs and calibrate dlib versus InsightFace thresholds. · `main` · /opt/picorg
+- **SBconfig**: Monitor remaining TVMaze 404 metadata warnings; do not alter the database without operator approval. · /opt/SBconfig
+- **premium_finder**: (no next_action) · /mnt/elements16a/Pron/premium_finder
+
+## in_progress
+
+- **AI-Memory**: Restart Cursor/Codex sessions so skill-optional-router.mdc is in context; optional SKILL.md still on demand. · `master` · /OneDrive/AI-Memory
+- **systemreview**: No host-critical next; honor LEAVE/BLOCKED in review.todo CURRENT QUEUE · /opt/systemreview
+- **handoff-rotation-repo**: Read WORK.md chat rotation section; use resume-cursor.sh / new chat id; export workbench if switching agents. · `main` · /opt/cursorwrapperscreen
+- **temu**: Restart the Cursor/Codex session in /opt/temu so MCP reloads ai_memory · /opt/temu
+- **brgc-wordpress**: Operator page-by-page review: docs/reports/2026-08-15-page-by-page-review.md. Then CF7, auth, webmaster answers, cutover approvals. No cutover. · /opt/brgc-wordpress
+- **mediasuite**: Watch SAB queue depth (still above 5000) and confirm qbit-clear-errored stays logged-in on qBittorrent 5 (204 + QBT_SID). · /opt/mediasuite
+
+## review
+
+- _empty_
+
+## done
+
+- **redditdaily**: (no next_action) · `master` · /opt/redditdaily
+
+Source: `handoff.json` + `cards.json` (max 20 extra) + `active_workbench.json` recent.
+
+## worktrees
+
+- `/opt/picorg 7688357 [main]`
+
+List/remove: `tools/agent-workbench-worktree.sh <repo> list` or `remove <name> --yes` (only `.worktrees/`). `prune --yes` drops stale registrations only.
 
 ## Fleet active work (AI-Memory global)
 
@@ -85,67 +122,9 @@ Ordered, checkable items. One agent turn ≈ one task when possible.
 - Finished: `RUNBOOK.md`, `OPERATING_POLICY.md`, and `picorg_manual.sh` provide the manual operator workflow and confidence rubric.
 - Finished: `project_registry.json` keeps repo-local alias overrides and blocked generic tokens separate from ingested lists.
 - Finished: dry-run across `/mnt/elements16/@mixedpics`, `/mnt/elements16a/Pron/jdownloaderscomplete`, and `/mnt/desktop/Pictures` completed with proxy accuracy 1.0.
-- Relevant paths: `picorg_sorter.py`, `README.md`, `RUNBOOK.md`, `OPERATING_POLICY.md`, `picorg_manual.sh`, `project_registry.json`, `/tmp/picorg-dry-run.json`
-
-## Next (ordered)
-
-1. Expand validated identity/source coverage to raise recall above 0.99; keep apply limited to confidence >= 0.95.
-2. Run `picorg_sorter.py manifest` if you want a persisted source map.
-3. Expand the source registry if new follow/friends lists appear.
-
-## Decisions
-
-- 2026-07-08: Use a single canonical destination tree with family subfolders and source-aware alias resolution.
-- 2026-07-08: Treat follow/friends/subreddit lists as additional identity sources, but keep conservative matching and quarantine unmatched caption-only files.
-- 2026-07-08: Preserve intact folders where possible and route exact duplicate folders into `duplicates/`.
-- 2026-07-08: Keep local alias exceptions and blocked generic terms in `project_registry.json`, not in ingested source files.
-- 2026-07-09: Use `OPERATING_POLICY.md` as the authoritative confidence rubric and manual workflow guide.
-
-## Blockers / failed paths
-
-- Do not retry: …
-
-## Pointers (do not paste large logs here)
-
-- Handoff export: `tools/agent-workbench-export.sh <repo>`
-- Structure: gitnexus MCP or `.gitnexus/`
-- Skeleton: `.rtt/context.txt`
-- Fleet memory: `AI_MEMORY_ROOT` + `ai_memory_cli.py memory status`
-
-## AI-Memory project (picorg)
-{
-  "project_name": "picorg",
-  "path": {
-    "windows": "G:/opt/picorg",
-    "linux": "/opt/picorg",
-    "fallback_windows": "C:/Users/slvr_/OneDrive/AI-Memory/remote/opt/picorg"
-  },
-  "category": "automation",
-  "status": "inactive",
-  "last_modified": "2026-07-08T13:27:27.286345",
-  "last_updated": "2026-08-01T02:00:12.890849Z",
-  "description": "Shell script project for automation with 2 shell scripts",
-  "purpose": "Shell script project for automation with 2 shell scripts",
-  "goals": [
-    "Operate picorg with up-to-date PROJECT.md and RUNBOOK.md",
-    "Keep project_context.json aligned with /opt/picorg (or actual install path)",
-    "Add known-good commands under EXAMPLES/ and regression tasks under EVALS/"
-  ],
-  "current_state": {
-    "main_components": [],
-    "status": "Initial setup",
-    "notes": "Project recently added to AI-Memory system"
-  },
-  "technology_stack": {
-    "primary_language": "Python",
-    "secondary_language": "Bash",
-    "framework": "To be determined",
-    "dependencies": []
-  },
-  "key_features": [],
-  "integration_points": []
-}
-## rtt skeleton
-# rtt index | generated 2026-08-04 13:23 | 18 files | 3680 tokens
-# If this looks outdated, ask the user to run: rtt update
-# export_face_references.py [pyth
+- Finished: benchmarked the available reviewed image pairs (2 genuine, 1 impostor); selected threshold 0.4734 with zero observed FMR/FNMR, but sample size is insufficient for production calibration.
+- Finished: expanded all available confirmed review samples to 66 pairs (31 genuine, 35 impostor); selected threshold 0.5638 with zero observed FMR/FNMR. Wilson 95% upper bounds remain 11.0% FNMR and 9.9% FMR, so this is not production-grade evidence.
+- Health: pytest with plugin autoload disabled reports 33 passed, 2 failed because face extraction imports an unavailable optional dependency before cache-only paths can be reused; the durable embedding cache reports 47.7% extraction errors (mostly missing/invalid inputs).
+- Fixed: face-recognition import is now deferred until an uncached image requires extraction; isolated pytest now passes 35/35.
+- Fixed: resume wrappers now have Bash shebangs and forward arguments; all repository shell scripts pass `bash -n` and ShellCheck.
+- Fixed: added `pytest.ini`, pinned `requirements-test.txt`, and executable `run_tests.sh` that isolates global plugins and p

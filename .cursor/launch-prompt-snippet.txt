@@ -1,85 +1,77 @@
 # Agent workbench export (fallback — prefer handoff.json)
 
 project: /opt/picorg
-generated: 2026-08-04T17:23:28Z
+generated: 2026-08-16T21:03:27Z
 
 ## handoff.json (primary)
+kanban: todo  review_required: False  branch: main
+worktree: /opt/picorg
 {
   "schema_version": 2,
   "work_id": "picorg",
   "status": "active",
-  "updated": "2026-08-04T17:23:28Z",
+  "updated": "2026-08-16T21:03:27Z",
   "agent_last": "bootstrap",
   "autonomous_mode": true,
   "goal": "Provide a deterministic organizer for mixed Reddit media intake with dry-run accuracy analysis, a repeatable periodic workflow, and a repo-local overlay registry.",
-  "next_action": "Create a labelled genuine/impostor pair file from reviewed images and run face_match_benchmark.py against the completed embedding cache.",
+  "next_action": "Generate a larger held-out Promptfoo dataset from confirmed review pairs and calibrate dlib versus InsightFace thresholds.",
   "do_not": [
     "Do not initialize a replacement repository or guess a remote URL."
   ],
   "attempt_count": 0,
   "max_build_attempts": 3,
   "last_error_class": "",
+  "kanban": "todo",
+  "worktree_path": "/opt/picorg",
+  "branch": "main",
+  "review_required": false,
+  "review_comments": [],
+  "touch_paths": [],
   "context_files": [
     "docs/agent-workbench/handoff.json",
     "docs/agent-workbench/WORK.md",
+    "docs/agent-workbench/BOARD.md",
+    "docs/agent-workbench/cards.json",
     ".cursor/agent-slice-policy.json"
   ]
 }
 
-## Switch status
-project: /opt/picorg
-work_id: picorg
-agent_last: bootstrap
-status: active
-goal: Provide a deterministic organizer for mixed Reddit media intake with dry-run accuracy analysis, a repeatable periodic workflow, and a repo-local overlay registry.
-next_action: Create a labelled genuine/impostor pair file from reviewed images and run face_match_benchmark.py against the completed embedding cache.
-attempt_count: 0
-do_not: Do not initialize a replacement repository or guess a remote URL.
-surfaces: WORK.md=ok, handoff.json=ok, export=ok, GEMINI.md=ok, .github/copilot-instructions.md=missing
-global_clients: .codex/config.toml=ok, .claude/CLAUDE.md=ok
-parity: missing
+## BOARD.md (bounded)
+# Agent kanban
 
-## Fleet active work (AI-Memory global)
+Generated: 2026-08-16T21:03:27Z
 
-## WORK.md (bounded)
-# Work: picorg
+Borrowed from Vibe Kanban columns (todo → done). Lifecycle `status` remains `active|blocked|done|stale`.
 
-work_id: picorg
-updated: 2026-07-31
-agent_last: codex
-spec_kit: <optional — link or path to spec/plan/tasks when multi-step>
+This repo: `picorg` · lifecycle `active` · kanban `todo`
 
-## Goal
+## todo
 
-Build a deterministic organizer that can resolve mixed Reddit media into canonical identity folders, support dry-run matching, report accuracy, and provide a repeatable periodic workflow with a repo-local overlay registry.
+- **picorg**: Generate a larger held-out Promptfoo dataset from confirmed review pairs and calibrate dlib versus InsightFace thresholds. · `main` · /opt/picorg
+- **SBconfig**: Monitor remaining TVMaze 404 metadata warnings; do not alter the database without operator approval. · /opt/SBconfig
+- **premium_finder**: (no next_action) · /mnt/elements16a/Pron/premium_finder
 
-## Spec (what — Spec Kit)
+## in_progress
 
-User-facing requirements only. No implementation detail.
+- **AI-Memory**: Restart Cursor/Codex sessions so skill-optional-router.mdc is in context; optional SKILL.md still on demand. · `master` · /OneDrive/AI-Memory
+- **systemreview**: No host-critical next; honor LEAVE/BLOCKED in review.todo CURRENT QUEUE · /opt/systemreview
+- **handoff-rotation-repo**: Read WORK.md chat rotation section; use resume-cursor.sh / new chat id; export workbench if switching agents. · `main` · /opt/cursorwrapperscreen
+- **temu**: Restart the Cursor/Codex session in /opt/temu so MCP reloads ai_memory · /opt/temu
+- **brgc-wordpress**: Operator page-by-page review: docs/reports/2026-08-15-page-by-page-review.md. Then CF7, auth, webmaster answers, cutover approvals. No cutover. · /opt/brgc-wordpress
+- **mediasuite**: Watch SAB queue depth (still above 5000) and confirm qbit-clear-errored stays logged-in on qBittorrent 5 (204 + QBT_SID). · /opt/mediasuite
 
-- Problem / user story
-- Acceptance criteria (testable)
-- Out of scope
+## review
 
-## Plan (how — Spec Kit)
+- _empty_
 
-Technical approach after spec is stable.
+## done
 
-- Architecture / components touched
-- Data flow or API contracts
-- Risks and mitigations
+- **redditdaily**: (no next_action) · `master` · /opt/redditdaily
 
-## Tasks (do — Spec Kit)
+Source: `handoff.json` + `cards.json` (max 20 extra) + `active_workbench.json` recent.
 
-Ordered, checkable items. One agent turn ≈ one task when possible.
+## worktrees
 
-- [ ] Task 1
-- [ ] Task 2
+- `/opt/picorg 7688357 [main]`
 
-## State
-
-- Finished: `picorg_sorter.py` implements identity catalog loading, dry-run matching, manifest export, and optional apply mode.
-- Finished: Reddit-context parsing now boosts explicit `r/` and `u/` markers plus title hints.
-- Finished: apply mode preserves intact folders where possible and routes exact duplicate folders into `duplicates/`.
-- Finished: `README.md` documents sources, usage, and current dry-run metrics.
-- Finished: `RUNBOOK.md`, `OPERATING_POLICY.md`, and `picor
+L

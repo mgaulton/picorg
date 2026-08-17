@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -19,8 +20,9 @@ import numpy as np
 
 
 DEFAULT_DB = Path("/opt/photo_reorg/data/high_accuracy_faces.db")
-DEFAULT_AUDIT = Path("/tmp/picorg_periodic_apply.json")
-DEFAULT_OUTPUT = Path("/tmp/picorg_face_grouping.json")
+DEFAULT_TEMP_ROOT = Path(tempfile.gettempdir())
+DEFAULT_AUDIT = DEFAULT_TEMP_ROOT / "picorg_periodic_apply.json"
+DEFAULT_OUTPUT = DEFAULT_TEMP_ROOT / "picorg_face_grouping.json"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 
 

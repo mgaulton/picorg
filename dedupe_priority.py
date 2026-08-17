@@ -23,12 +23,22 @@ def digest(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def iter_files(root: Path):
-    if not root.is_dir():
+def iter_files(root: Path, errors: list[dict[str, str]] | None = None):
+    try:
+        if not root.is_dir():
+            return
+        candidates = sorted(root.rglob("*"))
+    except OSError as exc:
+        if errors is not None:
+            errors.append({"path": str(root), "error": f"{type(exc).__name__}: {exc}"})
         return
-    for path in sorted(root.rglob("*")):
-        if path.is_file() and not path.is_symlink():
-            yield path
+    for path in candidates:
+        try:
+            if path.is_file() and not path.is_symlink():
+                yield path
+        except OSError as exc:
+            if errors is not None:
+                errors.append({"path": str(path), "error": f"{type(exc).__name__}: {exc}"})
 
 
 def build_report(priority_roots: list[Path], target_roots: list[Path], cache_path: Path | None = None) -> dict[str, Any]:
@@ -39,7 +49,7 @@ def build_report(priority_roots: list[Path], target_roots: list[Path], cache_pat
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             cache = {}
 
-    def cached_digest(path: Path) -> str | None:
+    def cached_digest(path: Path, errors: list[dict[str, str]]) -> str | None:
         try:
             stat = path.stat()
             old = cache.get(str(path))
@@ -48,29 +58,25 @@ def build_report(priority_roots: list[Path], target_roots: list[Path], cache_pat
             value = digest(path)
             cache[str(path)] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "sha256": value}
             return value
-        except (OSError, KeyError, TypeError, ValueError):
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            errors.append({"path": str(path), "error": f"{type(exc).__name__}: {exc}"})
             return None
 
     owners: dict[str, str] = {}
     duplicates: list[dict[str, str]] = []
+    skipped_errors: list[dict[str, str]] = []
     scanned = 0
     for root in priority_roots:
-        for path in iter_files(root):
+        for path in iter_files(root, skipped_errors):
             scanned += 1
-            try:
-                key = cached_digest(path)
-            except OSError:
-                continue
+            key = cached_digest(path, skipped_errors)
             if not key:
                 continue
             owners.setdefault(key, str(path))
     for root in target_roots:
-        for path in iter_files(root):
+        for path in iter_files(root, skipped_errors):
             scanned += 1
-            try:
-                key = cached_digest(path)
-            except OSError:
-                continue
+            key = cached_digest(path, skipped_errors)
             if not key:
                 continue
             owner = owners.get(key)
@@ -85,6 +91,8 @@ def build_report(priority_roots: list[Path], target_roots: list[Path], cache_pat
         "scanned_files": scanned,
         "duplicate_count": len(duplicates),
         "duplicates": duplicates,
+        "skipped_error_count": len(skipped_errors),
+        "skipped_errors": skipped_errors,
         "hash_cache_entries": len(cache),
     }
     if cache_path:
@@ -129,7 +137,7 @@ def main() -> int:
         quarantine(report, args.quarantine_root)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({key: report[key] for key in ("scanned_files", "duplicate_count", "quarantined_count") if key in report}, sort_keys=True))
+    print(json.dumps({key: report[key] for key in ("scanned_files", "duplicate_count", "quarantined_count", "skipped_error_count") if key in report}, sort_keys=True))
     return 0
 
 

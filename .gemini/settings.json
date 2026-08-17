@@ -49,9 +49,6 @@
       ],
       "env": {}
     },
-    "prompt-optimizer": {
-      "url": "http://127.0.0.1:18101/mcp"
-    },
     "ai_memory": {
       "command": "/OneDrive/AI-Memory/tools/ai-memory-mcp",
       "args": [],

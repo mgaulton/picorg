@@ -71,6 +71,14 @@ Ordered, checkable items. One agent turn ≈ one task when possible.
 - Added: Pillow decompression-bomb warnings are treated as hard preflight/decoder failures; readiness also requires explicit InsightFace model-license confirmation; suite passes 52/52.
 - Tightened: production readiness now requires a held-out benchmark, minimum 100 genuine/100 impostor pairs, and ≤1% 95% CI upper bounds for FMR/FNMR; suite passes 53/53.
 - Added: deterministic image-disjoint `split_face_pairs.py` prevents train/evaluation image leakage; suite passes 54/54.
+- Added: `USE_EXISTING_FACE_AUDIT=1` launch mode skips expensive face extraction and reuses an existing face-cluster report, failing closed if absent.
+- Improved: reuse mode now automatically selects the newest primary audit with a non-empty face-cluster companion when paths are omitted.
+- Added regression coverage proving detector/jitter cache mismatches are not reused; suite passes 55/55.
+- Changed UI auth to explicit opt-in via `PICORG_UI_AUTH=1`; inherited tokens are ignored by default.
+- Fixed: added shebang/argument-forwarding to `codexresume.sh` and `resume-codex.sh`; upgraded test dependency to `pytest>=9.0.3,<10` for PYSEC-2026-1845; `pip-audit` is clean; suite remains 56/56.
+- Fixed: replaced hardcoded `/tmp` audit fallback with the platform temp directory and documented the intentional LAN bind for Bandit; targeted Bandit and pip-audit now pass.
+- Fixed: full active-source Bandit scan found and removed ten medium B108 hardcoded-temp findings across the legacy entry points; scan now has zero medium/high findings and 160 low informational findings.
+- Fixed: reverse-search contact-sheet generation now resolves ImageMagick to an absolute executable path before subprocess calls; remaining Bandit findings are low-severity subprocess/assertion notices.
 - Relevant paths: `picorg_sorter.py`, `README.md`, `RUNBOOK.md`, `OPERATING_POLICY.md`, `picorg_manual.sh`, `project_registry.json`, `/tmp/picorg-dry-run.json`
 
 ## Next (ordered)
@@ -89,7 +97,8 @@ Ordered, checkable items. One agent turn ≈ one task when possible.
 
 ## Blockers / failed paths
 
-- Do not retry: …
+- Bandit reports intentional medium findings for LAN-wide `0.0.0.0` binding and the legacy `/tmp/picorg_sorted_audit` fallback; changing either would conflict with the requested LAN UI/default compatibility and requires a product decision.
+- Full-repository Bandit scan exceeded the bounded execution window; targeted application scan completed.
 
 ## Pointers (do not paste large logs here)
 

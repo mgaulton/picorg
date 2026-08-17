@@ -17,12 +17,13 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=40)
     parser.add_argument("--columns", type=int, default=4)
     args = parser.parse_args()
-    if shutil.which("magick") is None:
+    magick = shutil.which("magick")
+    if magick is None:
         parser.error("ImageMagick 'magick' is required")
 
     payload = json.loads(args.queue.read_text(encoding="utf-8"))
     items = payload.get("items", [])[: max(0, args.limit)]
-    command = ["magick", "montage"]
+    command = [magick, "montage"]
     accepted = 0
     skipped = 0
     for item in items:
@@ -35,7 +36,7 @@ def main() -> int:
         except OSError:
             continue
         identified = subprocess.run(
-            ["magick", "identify", str(path)],
+            [magick, "identify", str(path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,

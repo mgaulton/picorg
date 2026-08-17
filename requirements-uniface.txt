@@ -1,0 +1,2 @@
+# Optional local UniFace benchmark backend; not installed by the core pipeline.
+uniface[cpu]>=4,<5
