@@ -7,6 +7,7 @@ import argparse
 import os
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -24,18 +25,40 @@ def main() -> int:
     parser.add_argument("roots", nargs="+", type=Path)
     args = parser.parse_args()
 
-    shutil.rmtree(args.output, ignore_errors=True)
+    marker = args.output / ".picorg-managed"
+    temp_root = Path(os.environ.get("TMPDIR", tempfile.gettempdir())).resolve()
+    legacy_tmp = args.output.parent.resolve() == temp_root and args.output.name.startswith("photo_reorg_social_references")
+    if args.output.exists():
+        if not marker.is_file() and not legacy_tmp:
+            raise SystemExit(f"refusing to remove unmarked output directory: {args.output}")
+        shutil.rmtree(args.output)
     args.output.mkdir(parents=True)
+    marker = args.output / ".picorg-managed"
+    marker.touch()
     identities = references = 0
     for root in args.roots:
-        if not root.is_dir():
+        try:
+            available = root.is_dir()
+        except OSError as exc:
+            print(f"warning: skipping unreadable root: {root}: {exc.strerror}", file=sys.stderr)
+            available = False
+        if not available:
             continue
         source_name = safe(root.name)
-        for identity_dir in sorted(item for item in root.iterdir() if item.is_dir() and not item.name.startswith(".")):
-            images = sorted(
-                item for item in identity_dir.rglob("*")
-                if item.is_file() and item.suffix.lower() in EXTENSIONS
-            )[: args.per_identity]
+        try:
+            identity_dirs = sorted(item for item in root.iterdir() if item.is_dir() and not item.name.startswith("."))
+        except OSError as exc:
+            print(f"warning: skipping unreadable root: {root}: {exc.strerror}", file=sys.stderr)
+            continue
+        for identity_dir in identity_dirs:
+            try:
+                images = sorted(
+                    item for item in identity_dir.rglob("*")
+                    if item.is_file() and item.suffix.lower() in EXTENSIONS
+                )[: args.per_identity]
+            except OSError as exc:
+                print(f"warning: skipping unreadable identity: {identity_dir}: {exc.strerror}", file=sys.stderr)
+                continue
             if not images:
                 continue
             target_dir = args.output / f"{source_name}__{safe(identity_dir.name)}"

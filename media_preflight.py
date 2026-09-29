@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import warnings
 from collections import Counter
 from pathlib import Path
@@ -16,14 +17,24 @@ from typing import Any
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 DEFAULT_MAX_PIXELS = 89_478_485
+THUMBNAIL_PATTERN = re.compile(r"(?:^|[_ .-])(?:thumb(?:nail)?|preview|teaser|lowres|small|\d{2,4}px|\d{2,4}x\d{2,4})(?:$|[_ .-])", re.I)
 
 
-def classify_path(raw_path: str, verify_image: bool = False, max_pixels: int = DEFAULT_MAX_PIXELS) -> str:
+def classify_path(raw_path: str, verify_image: bool = False, max_pixels: int = DEFAULT_MAX_PIXELS, skip_paths: set[str] | None = None) -> str:
+    if skip_paths and raw_path in skip_paths:
+        return "skipped"
     path = Path(raw_path)
-    if not path.exists():
-        return "missing"
-    if not path.is_file():
-        return "not_file"
+    if THUMBNAIL_PATTERN.search(path.stem):
+        return "thumbnail"
+    try:
+        if not path.exists():
+            return "missing"
+        if not path.is_file():
+            return "not_file"
+    except OSError:
+        # Degraded/FUSE mounts can raise EIO from exists/is_file. Keep the
+        # audit complete and let operators quarantine the exact path.
+        return "unreadable"
     if path.suffix.lower() not in IMAGE_EXTENSIONS:
         return "unsupported_extension"
     try:
@@ -48,16 +59,30 @@ def classify_path(raw_path: str, verify_image: bool = False, max_pixels: int = D
     return "candidate"
 
 
-def preflight(audit_path: Path, verify_image: bool = False, max_pixels: int = DEFAULT_MAX_PIXELS) -> dict[str, Any]:
+def load_skip_paths(path: Path | None) -> set[str]:
+    if not path:
+        return set()
+    try:
+        if not path.is_file():
+            return set()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return set()
+    values = payload.get("paths", []) if isinstance(payload, dict) else payload
+    return {str(value) for value in values if isinstance(value, str)}
+
+
+def preflight(audit_path: Path, verify_image: bool = False, max_pixels: int = DEFAULT_MAX_PIXELS, skip_paths: Path | None = None) -> dict[str, Any]:
     payload = json.loads(audit_path.read_text(encoding="utf-8"))
     results = payload.get("results", [])
     records = []
     counts: Counter[str] = Counter()
+    skipped = load_skip_paths(skip_paths)
     for item in results:
         if not isinstance(item, dict) or item.get("canonical") or not item.get("path"):
             continue
         path = str(item["path"])
-        status = classify_path(path, verify_image, max_pixels)
+        status = classify_path(path, verify_image, max_pixels, skipped)
         counts[status] += 1
         records.append({"path": path, "status": status})
     return {
@@ -75,8 +100,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--verify-images", action="store_true")
     parser.add_argument("--max-pixels", type=int, default=DEFAULT_MAX_PIXELS)
+    parser.add_argument("--skip-paths", type=Path, help="JSON file containing paths to exclude before filesystem access")
     args = parser.parse_args()
-    report = preflight(args.audit, args.verify_images, args.max_pixels)
+    report = preflight(args.audit, args.verify_images, args.max_pixels, args.skip_paths)
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(rendered, encoding="utf-8")

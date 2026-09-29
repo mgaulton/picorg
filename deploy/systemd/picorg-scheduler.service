@@ -1,0 +1,19 @@
+[Unit]
+Description=PicOrg intake and map scheduler
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/picorg
+Environment=PICORG_SCHEDULER_CONFIG=/opt/picorg/.cache/picorg/scheduler.json
+Environment=PICORG_SCHEDULER_STATUS=/opt/picorg/.cache/picorg/scheduler-status.json
+ExecStart=/opt/picorg/.venv/bin/python /opt/picorg/picorg_scheduler.py daemon
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

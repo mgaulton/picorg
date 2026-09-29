@@ -1,38 +1,4 @@
 {
-  "blocked_tokens": [
-    "cum",
-    "ngl",
-    "ass",
-    "boobs",
-    "boots",
-    "braless",
-    "canadian",
-    "cosplay",
-    "corsets",
-    "facial",
-    "games",
-    "gingers",
-    "goth",
-    "innocent",
-    "kinky",
-    "lingerie",
-    "nipples",
-    "panties",
-    "perky",
-    "petite",
-    "redheads",
-    "saggy",
-    "selfie",
-    "selfies",
-    "sex",
-    "sexy",
-    "stockings",
-    "thick",
-    "tittyfuck",
-    "upskirt",
-    "videos",
-    "wet"
-  ],
   "ambiguous_tokens": [
     "anal",
     "bukkake",
@@ -52,235 +18,381 @@
     "the_little_red",
     "toronto"
   ],
-  "preferred_alias_targets": {
-    "extrasadspice": "QueenSadSpice",
-    "imsadspice": "QueenSadSpice",
-    "monalita": "monalitaxo",
-    "monalitadreams": "monalitaxo",
-    "mona_hguylen": "monalitaxo",
-    "sadspiceisback": "QueenSadSpice",
-    "stoya": "atoyadoll"
-  },
+  "blocked_tokens": [
+    "content",
+    "cum",
+    "download",
+    "downloads",
+    "ngl",
+    "ass",
+    "boobs",
+    "boots",
+    "braless",
+    "canadian",
+    "cosplay",
+    "corsets",
+    "facial",
+    "games",
+    "gingers",
+    "goth",
+    "innocent",
+    "kinky",
+    "lingerie",
+    "media",
+    "nipples",
+    "panties",
+    "photos",
+    "pics",
+    "perky",
+    "petite",
+    "redheads",
+    "saggy",
+    "selfie",
+    "selfies",
+    "sex",
+    "sexy",
+    "stockings",
+    "thick",
+    "tittyfuck",
+    "upskirt",
+    "videos",
+    "unknown",
+    "vagina",
+    "wet",
+    "whitelingerie",
+    "wouldyourather",
+    "wtf",
+    "wow",
+    "xart",
+    "xsome",
+    "xss",
+    "zoomies",
+    "walmart",
+    "voluptuous",
+    "vpn",
+    "vrd",
+    "unexpected",
+    "android",
+    "asmr",
+    "askit",
+    "babybumps",
+    "bridal",
+    "cat_girls",
+    "choker",
+    "creepy",
+    "cringe",
+    "docker",
+    "edging",
+    "facesitting",
+    "geek",
+    "logs",
+    "military",
+    "modelling",
+    "pornhub",
+    "science",
+    "scp",
+    "shield",
+    "survival",
+    "tifu",
+    "titfuck",
+    "titties",
+    "thumbnail",
+    "thumbnails"
+  ],
   "entries": [
     {
-      "family": "manual",
+      "aliases": [
+        "Lara Loft",
+        "LaraLoft"
+      ],
       "canonical": "lara_loft",
-      "aliases": ["Lara Loft", "LaraLoft"],
+      "family": "manual",
       "notes": "Validated from repeated exact Lara Loft filename/title clusters; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Sandra Hunke"
+      ],
       "canonical": "sandra_hunke",
-      "aliases": ["Sandra Hunke"],
+      "family": "manual",
       "notes": "Validated from repeated exact Sandra Hunke filename/title clusters; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Leoobalys"
+      ],
       "canonical": "leoobalys",
-      "aliases": ["Leoobalys"],
+      "family": "manual",
       "notes": "Validated from repeated exact Leoobalys filename/title clusters."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Kajamood"
+      ],
       "canonical": "kajamood",
-      "aliases": ["Kajamood"],
+      "family": "manual",
       "notes": "Validated from the exact Kajamood filename/title cluster and local Reddit friend evidence."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Brett Cooper"
+      ],
       "canonical": "brett_cooper",
-      "aliases": ["Brett Cooper"],
+      "family": "manual",
       "notes": "Validated from repeated exact Brett Cooper filename/title clusters and BrettCooperSFW source evidence."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Tara Yummy"
+      ],
       "canonical": "tara_yummy",
-      "aliases": ["Tara Yummy"],
+      "family": "manual",
       "notes": "Validated from repeated exact Tara Yummy filename/title clusters; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Jameliz"
+      ],
       "canonical": "jameliz",
-      "aliases": ["Jameliz"],
+      "family": "manual",
       "notes": "Validated from repeated exact Jameliz filename/title clusters and local source evidence."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Leanna Decker"
+      ],
       "canonical": "leanna_decker",
-      "aliases": ["Leanna Decker"],
+      "family": "manual",
       "notes": "Validated from repeated exact Leanna Decker filename/title clusters; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Nadine Breauty"
+      ],
       "canonical": "nadine_breauty",
-      "aliases": ["Nadine Breauty"],
+      "family": "manual",
       "notes": "Validated from the exact Nadine Breauty filename/title cluster."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Nika Sofie"
+      ],
       "canonical": "nika_sofie",
-      "aliases": ["Nika Sofie"],
+      "family": "manual",
       "notes": "Validated from the exact Nika Sofie filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "HoneyPuu"
+      ],
       "canonical": "honeypuu",
-      "aliases": ["HoneyPuu"],
+      "family": "manual",
       "notes": "Validated from the exact HoneyPuu filename/title cluster."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Angelina Michelle"
+      ],
       "canonical": "angelina_michelle",
-      "aliases": ["Angelina Michelle"],
+      "family": "manual",
       "notes": "Validated from the exact Angelina Michelle filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Scarlet Chase"
+      ],
       "canonical": "scarlet_chase",
-      "aliases": ["Scarlet Chase"],
+      "family": "manual",
       "notes": "Validated from the exact Scarlet Chase filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Larkin Love"
+      ],
       "canonical": "larkin_love",
-      "aliases": ["Larkin Love"],
+      "family": "manual",
       "notes": "Validated from the exact Larkin Love filename/title cluster and local Reddit friend evidence."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Mckenna Grace"
+      ],
       "canonical": "mckenna_grace",
-      "aliases": ["Mckenna Grace"],
+      "family": "manual",
       "notes": "Validated from the exact Mckenna Grace filename/title cluster; full phrase only."
     },
     {
-      "family": "metadaily",
+      "aliases": [
+        "Francesca Capaldi",
+        "FrancescaCapaldi"
+      ],
       "canonical": "ms_francescacapaldi",
-      "aliases": ["Francesca Capaldi", "FrancescaCapaldi"],
-      "notes": "Validated against /opt/metadaily/data/identity_aliases.json and local ms_francescacapaldi source evidence."
+      "family": "metadaily",
+      "notes": "Validated against /opt/shared/identity_aliases.json and local ms_francescacapaldi source evidence."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Mona Marie"
+      ],
       "canonical": "mona_marie",
-      "aliases": ["Mona Marie"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Mona Marie filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Kay Panabaker"
+      ],
       "canonical": "kay_panabaker",
-      "aliases": ["Kay Panabaker"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Kay Panabaker filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Lea Martinez"
+      ],
       "canonical": "lea_martinez",
-      "aliases": ["Lea Martinez"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Lea Martinez filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Lily Brooks OBriant",
+        "Lily Brooks O'Briant"
+      ],
       "canonical": "lily_brooks_obriant",
-      "aliases": ["Lily Brooks OBriant", "Lily Brooks O'Briant"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Lily Brooks OBriant filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Sara Mei Kasai"
+      ],
       "canonical": "sara_mei_kasai",
-      "aliases": ["Sara Mei Kasai"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Sara Mei Kasai filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Victoria Picarella"
+      ],
       "canonical": "victoria_picarella",
-      "aliases": ["Victoria Picarella"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Victoria Picarella filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Caitlin Christine"
+      ],
       "canonical": "caitlin_christine",
-      "aliases": ["Caitlin Christine"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Caitlin Christine filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Sirena Milano"
+      ],
       "canonical": "sirena_milano",
-      "aliases": ["Sirena Milano"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Sirena Milano filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Sterre Meijer"
+      ],
       "canonical": "sterre_meijer",
-      "aliases": ["Sterre Meijer"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Sterre Meijer filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Alexa Hendricks"
+      ],
       "canonical": "alexa_hendricks",
-      "aliases": ["Alexa Hendricks"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Alexa Hendricks filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Cathy Kelley"
+      ],
       "canonical": "cathy_kelley",
-      "aliases": ["Cathy Kelley"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Cathy Kelley filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Chloe May"
+      ],
       "canonical": "chloe_may",
-      "aliases": ["Chloe May"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Chloe May filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Elizabeth Olsen"
+      ],
       "canonical": "elizabeth_olsen",
-      "aliases": ["Elizabeth Olsen"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Elizabeth Olsen filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Leonie Busse"
+      ],
       "canonical": "leonie_busse",
-      "aliases": ["Leonie Busse"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Leonie Busse filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Hannah Stein"
+      ],
       "canonical": "hannah_stein",
-      "aliases": ["Hannah Stein"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Hannah Stein filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Harley Haisley"
+      ],
       "canonical": "harley_haisley",
-      "aliases": ["Harley Haisley"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Harley Haisley filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Jenna Lynn Meowri"
+      ],
       "canonical": "jenna_lynn_meowri",
-      "aliases": ["Jenna Lynn Meowri"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Jenna Lynn Meowri filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Sarah Gibson"
+      ],
       "canonical": "sarah_gibson",
-      "aliases": ["Sarah Gibson"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Sarah Gibson filename/title cluster; full phrase only."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Mina Starsiak"
+      ],
       "canonical": "mina_starsiak",
-      "aliases": ["Mina Starsiak"],
+      "family": "manual",
       "notes": "Validated from the repeated exact Mina Starsiak filename/title cluster; full phrase only."
     },
     {
-      "family": "pscrape",
+      "aliases": [
+        "Hannah Owo",
+        "hannah owo"
+      ],
       "canonical": "hannahowo",
-      "aliases": ["Hannah Owo", "hannah owo"],
+      "family": "pscrape",
       "notes": "Validated from /opt/pscrape/hannahowo.txt and downloader filenames."
     },
     {
-      "family": "metadaily",
-      "canonical": "giada_de_laurentiis",
       "aliases": [
         "Giada De Laurentiis",
         "Giada De Laurentis",
@@ -290,376 +402,496 @@
         "Seductive Giada",
         "bellissima Giada"
       ],
+      "canonical": "giada_de_laurentiis",
+      "family": "metadaily",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "metadaily",
+      "aliases": [
+        "Girls play"
+      ],
       "canonical": "girlsplay",
-      "aliases": ["Girls play"],
+      "family": "metadaily",
       "notes": "Validated exact phrase alias from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Ariel Winter",
+        "ariel winter"
+      ],
       "canonical": "arielwinter",
-      "aliases": ["Ariel Winter", "ariel winter"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Anna Kendrick",
+        "anna kendrick"
+      ],
       "canonical": "annakendrick",
-      "aliases": ["Anna Kendrick", "anna kendrick"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Chloe Grace Moretz",
+        "chloe grace moretz"
+      ],
       "canonical": "chloegracemoretz",
-      "aliases": ["Chloe Grace Moretz", "chloe grace moretz"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Christina Green",
+        "christina green"
+      ],
       "canonical": "christinagreen",
-      "aliases": ["Christina Green", "christina green"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Christina Hendricks",
+        "christina hendricks"
+      ],
       "canonical": "christinahendricks",
-      "aliases": ["Christina Hendricks", "christina hendricks"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Evelyn Claire",
+        "evelyn claire"
+      ],
       "canonical": "evelynclaire",
-      "aliases": ["Evelyn Claire", "evelyn claire"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Isla Fisher",
+        "isla fisher"
+      ],
       "canonical": "islafisher",
-      "aliases": ["Isla Fisher", "isla fisher"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Kendall Jenner",
+        "kendall jenner"
+      ],
       "canonical": "kendalljenner",
-      "aliases": ["Kendall Jenner", "kendall jenner"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Lili Reinhart",
+        "lili reinhart"
+      ],
       "canonical": "lilireinhart",
-      "aliases": ["Lili Reinhart", "lili reinhart"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Lyra Crow",
+        "lyra crow"
+      ],
       "canonical": "lyracrow",
-      "aliases": ["Lyra Crow", "lyra crow"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Miley Cyrus",
+        "miley cyrus"
+      ],
       "canonical": "mileycyrus",
-      "aliases": ["Miley Cyrus", "miley cyrus"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Morena Baccarin",
+        "morena baccarin"
+      ],
       "canonical": "morenabaccarin",
-      "aliases": ["Morena Baccarin", "morena baccarin"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Olivia Wilde",
+        "olivia wilde"
+      ],
       "canonical": "oliviawilde",
-      "aliases": ["Olivia Wilde", "olivia wilde"],
+      "family": "manual",
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "manual",
+      "aliases": [
+        "Sadie Sink",
+        "sadie sink"
+      ],
       "canonical": "sadiesink",
-      "aliases": ["Sadie Sink", "sadie sink"],
-      "notes": "Validated from the picorg mixedpics accuracy sample."
-    },
-    {
       "family": "manual",
-      "canonical": "sophieturner",
-      "aliases": ["Sophie Turner", "sophie turner"],
       "notes": "Validated from the picorg mixedpics accuracy sample."
     },
     {
-      "family": "metadaily",
+      "aliases": [
+        "Sophie Turner",
+        "sophie turner"
+      ],
+      "canonical": "sophieturner",
+      "family": "manual",
+      "notes": "Validated from the picorg mixedpics accuracy sample."
+    },
+    {
+      "aliases": [
+        "imsadspice",
+        "extrasadspice",
+        "sadspiceisback"
+      ],
       "canonical": "QueenSadSpice",
-      "aliases": ["imsadspice", "extrasadspice", "sadspiceisback"],
+      "family": "metadaily",
       "notes": "Project-local metadaily canonical for the SadSpice family."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "bailey_spinn",
       "aliases": [
         "Bailey Spinn",
         "baileyspinn",
         "bailey_spinn"
       ],
+      "canonical": "bailey_spinn",
+      "family": "reddit_follow",
       "notes": "Project-local identity for Bailey Spinn."
     },
     {
-      "family": "pscrape",
-      "canonical": "hailstorm93",
       "aliases": [
         "ahhhey",
         "hailstorm93"
       ],
+      "canonical": "hailstorm93",
+      "family": "pscrape",
       "notes": "Project-local alias overlay; ahhhey is an alias of hailstorm93."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "brookemonkthesecond",
       "aliases": [
         "BrookeMonkTheSecond",
         "brooke monk the second",
         "brooke monk",
         "brooke monk second"
       ],
+      "canonical": "brookemonkthesecond",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Brooke Monk variant names."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "pennypax",
       "aliases": [
         "PennyPax",
         "penny pax"
       ],
+      "canonical": "pennypax",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Penny Pax variants."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "camilamendes",
       "aliases": [
         "CamilaMendes",
         "Camila Mendes"
       ],
+      "canonical": "camilamendes",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Camila Mendes variants."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "laurenphillips",
       "aliases": [
         "LaurenPhillips",
         "Lauren Phillips"
       ],
+      "canonical": "laurenphillips",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Lauren Phillips variants."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "jia_lissa",
       "aliases": [
         "Jia_Lissa",
         "Jia Lissa"
       ],
+      "canonical": "jia_lissa",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Jia Lissa variants."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "emma_wallbank",
       "aliases": [
         "Emma Wallbank",
         "Em Wallbank"
       ],
+      "canonical": "emma_wallbank",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Emma Wallbank variants."
     },
     {
-      "family": "reddit_subreddit",
-      "canonical": "alexisbledel",
       "aliases": [
         "Alexis Bledel"
       ],
+      "canonical": "alexisbledel",
+      "family": "reddit_subreddit",
       "notes": "Project-local alias overlay for Alexis Bledel."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "rachel_zegler",
       "aliases": [
         "Rachel Zegler"
       ],
+      "canonical": "rachel_zegler",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Rachel Zegler."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "julia_kelly",
       "aliases": [
         "Julia Kelly"
       ],
+      "canonical": "julia_kelly",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Julia Kelly."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "megan_mahoney",
       "aliases": [
         "Megan Mahoney"
       ],
+      "canonical": "megan_mahoney",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Megan Mahoney."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "aidrafoxnew",
       "aliases": [
         "AidraFoxNew",
         "Aidra Fox New"
       ],
+      "canonical": "aidrafoxnew",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for AidraFoxNew."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "emilydeytaysage",
       "aliases": [
         "EmilyDeytAysage"
       ],
+      "canonical": "emilydeytaysage",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for EmilyDeytAysage."
     },
     {
-      "family": "pscrape",
-      "canonical": "darlacrane",
       "aliases": [
         "Darla Crane"
       ],
+      "canonical": "darlacrane",
+      "family": "pscrape",
       "notes": "Project-local alias overlay for Darla Crane."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "payton_n",
       "aliases": [
         "Payton.n",
         "Payton N"
       ],
+      "canonical": "payton_n",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Payton.n."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "callmesloo",
       "aliases": [
         "callmesloo",
         "Call Me Sloo"
       ],
+      "canonical": "callmesloo",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for callmesloo."
     },
     {
-      "family": "reddit_subreddit",
-      "canonical": "juliafilippo",
       "aliases": [
         "Julia Filippo"
       ],
+      "canonical": "juliafilippo",
+      "family": "reddit_subreddit",
       "notes": "Project-local alias overlay for Julia Filippo."
     },
     {
-      "family": "reddit_subreddit",
-      "canonical": "karengillan",
       "aliases": [
         "Karen Gillan"
       ],
+      "canonical": "karengillan",
+      "family": "reddit_subreddit",
       "notes": "Project-local alias overlay for Karen Gillan."
     },
     {
-      "family": "imdb",
-      "canonical": "atoyadoll",
       "aliases": [
         "stoya"
       ],
-      "notes": "Project-local alias overlay; stoya is treated as atoyadoll for this corpus."
+      "canonical": "stoyadoll",
+      "family": "imdb",
+      "notes": "Project-local alias overlay; stoya is treated as stoyadoll for this corpus."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "stella_violet",
       "aliases": [
         "Stella Violet"
       ],
+      "canonical": "stella_violet",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Stella Violet."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "emmamagnoliafans",
       "aliases": [
         "EmmaMagnoliaFans",
         "emma magnolia fans"
       ],
+      "canonical": "emmamagnoliafans",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for EmmaMagnoliaFans."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "billieeilish",
       "aliases": [
         "Billie Eilish"
       ],
+      "canonical": "billieeilish",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Billie Eilish spaced-title matches."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "claragalle",
       "aliases": [
         "Clara Galle"
       ],
+      "canonical": "claragalle",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Clara Galle."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "larsenthompson",
       "aliases": [
         "Larsen Thompson"
       ],
+      "canonical": "larsenthompson",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Larsen Thompson."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "natashalyonne",
       "aliases": [
         "Natasha Lyonne"
       ],
+      "canonical": "natashalyonne",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Natasha Lyonne."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "octaviared",
       "aliases": [
         "Octavia Red"
       ],
+      "canonical": "octaviared",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Octavia Red."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "simonesteele",
       "aliases": [
         "Simone Steele"
       ],
+      "canonical": "simonesteele",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Simone Steele."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "brandyrenee",
       "aliases": [
         "Brandy Renee"
       ],
+      "canonical": "brandyrenee",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Brandy Renee."
     },
     {
-      "family": "reddit_follow",
-      "canonical": "ellahughesr",
       "aliases": [
         "Ellahughesr",
         "Ella Hughes R"
       ],
+      "canonical": "ellahughesr",
+      "family": "reddit_follow",
       "notes": "Project-local alias overlay for Ellahughesr."
     },
     {
-      "family": "reddit_subreddit",
-      "canonical": "monalitaxo",
       "aliases": [
         "Monalita",
         "MonalitaDreams",
         "Mona Hguylen",
         "mona_hguylen"
       ],
+      "canonical": "monalitaxo",
+      "family": "reddit_subreddit",
       "notes": "Project-local alias overlay; Monalita folds into Monalitaxo/Mona Hguylen."
+    },
+    {
+      "aliases": [
+        "Tory Lane"
+      ],
+      "canonical": "torylane",
+      "family": "manual",
+      "notes": "User-confirmed identity."
+    },
+    {
+      "aliases": [
+        "new creator",
+        "new_creator"
+      ],
+      "canonical": "new_creator",
+      "family": "manual",
+      "notes": "Temporary local folder/label pending human rename; 63 face markers still use this identity. Do not publish to Metadaily until renamed."
+    },
+    {
+      "aliases": [
+        "RachelleEvans",
+        "rachelle_evans_fb"
+      ],
+      "canonical": "Rachelle Evans",
+      "family": "manual",
+      "notes": "User-confirmed Facebook redhead-group identity; 50 confirmed images are in the local Rachelle Evans folder."
+    },
+    {
+      "aliases": [
+        "Nicole Valentine",
+        "nicolevalentinexxx",
+        "redhottie001"
+      ],
+      "canonical": "nicolevalentine",
+      "family": "metadaily",
+      "notes": "Nicole Valentine; corrected local alias from redhottie001; redhottie001 corrected to nicolevalentinexxx"
     }
-  ]
+  ],
+  "preferred_alias_targets": {
+    "Sadie Sink": "SadieSink",
+    "bailey_spinn": "baileyspinn",
+    "baileyspinn": "baileyspinn",
+    "cherry_flute": "Cherry_Flute",
+    "dee_williams": "deewilliams",
+    "deewilliams": "deewilliams",
+    "deewilliamsxxx": "deewilliams",
+    "extrasadspice": "QueenSadSpice",
+    "freedeewi": "deewilliams",
+    "giannathemichaels": "GiannaTheMichaels",
+    "girlsplay_ooc": "girlsplay",
+    "girlsplaypix": "girlsplay",
+    "gp_tv": "girlsplay",
+    "gptv": "girlsplay",
+    "imsadspice": "QueenSadSpice",
+    "katiekat1999x": "KatieKat1999x",
+    "laceybloom": "LaceyBloom",
+    "leannadecker": "leanna_decker",
+    "mona_hguylen": "monalitaxo",
+    "monalita": "monalitaxo",
+    "monalitadreams": "monalitaxo",
+    "real_dee_williams": "deewilliams",
+    "redhottie001": "nicolevalentine",
+    "sadiesink": "SadieSink",
+    "sadspiceisback": "QueenSadSpice",
+    "stoya": "stoyadoll",
+    "underthescrubs": "Underthescrubs",
+    "watch_girls_play": "girlsplay",
+    "watchgirlsplay": "girlsplay"
+  }
 }

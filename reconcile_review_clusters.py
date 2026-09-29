@@ -11,7 +11,29 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+import picorg_sorter as sorter
 from review_ui import build_clusters, load_audit
+
+
+def _registry_identity_aliases() -> Dict[str, str]:
+    """Return normalized curated registry names mapped to one canonical."""
+    path = Path(__file__).with_name("project_registry.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    aliases: Dict[str, str] = {}
+    for entry in payload.get("entries", []) if isinstance(payload, dict) else []:
+        if not isinstance(entry, dict) or str(entry.get("family") or "") != "manual":
+            continue
+        canonical = str(entry.get("canonical") or "").strip()
+        if not canonical:
+            continue
+        for name in (canonical, *(entry.get("aliases") or [])):
+            key = sorter.normalize_key(str(name))
+            if key:
+                aliases[key] = canonical
+    return aliases
 
 
 class DisjointSet:
@@ -36,53 +58,64 @@ class DisjointSet:
 def reconcile_clusters(name_audit: Dict[str, Any], face_audit: Dict[str, Any]) -> List[Dict[str, Any]]:
     name_clusters = build_clusters(name_audit)
     face_clusters = build_clusters(face_audit)
-    paths: Dict[str, Dict[str, str]] = {}
-    disjoint = DisjointSet()
-    # Face clusters define review membership. Name clusters are attached as
-    # context only and must not merge otherwise-distinct face clusters.
-    for cluster in face_clusters:
-        node = f"face:{cluster['cluster_id']}"
-        disjoint.add(node)
-        for path in cluster["paths"]:
-            paths.setdefault(path, {})["face"] = node
-            disjoint.union(node, f"path:{path}")
+    registry_aliases = _registry_identity_aliases()
+    names_for_path: Dict[str, List[Dict[str, Any]]] = {}
     for cluster in name_clusters:
-        node = f"name:{cluster['cluster_id']}"
-        disjoint.add(node)
         for path in cluster["paths"]:
-            paths.setdefault(path, {})["name"] = node
-            if "face" not in paths[path]:
-                disjoint.union(node, f"path:{path}")
-
-    components: Dict[str, Dict[str, Any]] = {}
-    for path, links in paths.items():
-        root = disjoint.find(next(iter(links.values())))
-        component = components.setdefault(root, {"paths": [], "name_nodes": set(), "face_nodes": set()})
-        component["paths"].append(path)
-        component["name_nodes"].update(node for node in links.values() if node.startswith("name:"))
-        component["face_nodes"].update(node for node in links.values() if node.startswith("face:"))
+            names_for_path.setdefault(path, []).append(cluster)
 
     output: List[Dict[str, Any]] = []
-    names_by_node = {f"name:{cluster['cluster_id']}": cluster for cluster in name_clusters}
-    faces_by_node = {f"face:{cluster['cluster_id']}": cluster for cluster in face_clusters}
-    for index, component in enumerate(sorted(components.values(), key=lambda item: (-len(item["paths"]), sorted(item["paths"])[0]))):
-        component_paths = sorted(component["paths"])
+    # Emit one review cluster per face cluster. Name evidence is collected as
+    # context for those paths and is never allowed to merge face clusters.
+    for face_cluster in face_clusters:
+        component_paths = sorted({str(path) for path in face_cluster["paths"] if path})
+        if not component_paths:
+            continue
+        face_id = str(face_cluster["cluster_id"])
+        # Keep the historical path-derived id stable so existing review
+        # decisions continue to apply after the membership split.
         digest = hashlib.sha256("|".join(component_paths).encode("utf-8")).hexdigest()[:16]
-        name_titles = sorted(names_by_node[node]["title"] for node in component["name_nodes"])
-        face_ids = sorted(faces_by_node[node]["cluster_id"] for node in component["face_nodes"])
-        method = "name+face" if name_titles and face_ids else "name-only" if name_titles else "face-only"
-        title = f"reconciled-{digest} ({method})"
+        related_names = [name for path in component_paths for name in names_for_path.get(path, [])]
+        name_titles = sorted({str(name["title"]) for name in related_names})
+        name_identities = sorted({
+            registry_aliases[sorter.normalize_key(str(identity))]
+            for name in related_names
+            for identity in name.get("expected_identities", [])
+            if identity and sorter.normalize_key(str(identity)) in registry_aliases
+        })
+        face_ids = [face_id]
+        face_labels = sorted({str(label) for label in face_cluster.get("face_cluster_labels", []) if label})
+        method = "name+face" if name_titles else "face-only"
+        # Only expose an fbunknown label for a small, single-face group. Large
+        # groups remain reviewable but are not identity evidence.
+        face_label_eligible = len(component_paths) < 100 and len(face_labels) == 1
+        if len(name_identities) == 1:
+            title = name_identities[0]
+        elif face_label_eligible:
+            title = face_labels[0]
+            if name_titles:
+                title += f" · name: {name_titles[0]}"
+        else:
+            title = f"facegroup-{digest[:8]}"
         output.append({
             "cluster_id": f"reconciled-{digest}",
             "title": title,
             "paths": component_paths,
             "count": len(component_paths),
             "name_titles": name_titles,
+            "name_identities": name_identities,
             "face_clusters": face_ids,
+            "face_labels": face_labels,
+            "face_label_eligible": face_label_eligible,
             "method": method,
             "sample_paths": component_paths[:12],
         })
-    return output
+
+    # Do not emit filename/title-only groups. A review cluster is meaningful
+    # only when at least one usable face embedding placed its members in the
+    # same face cluster. Images with no face result remain in the audit for
+    # later processing, but cannot be presented as a purported face group.
+    return sorted(output, key=lambda item: (-item["count"], item["paths"][0] if item["paths"] else ""))
 
 
 def _atomic_write(path: Path, payload: Dict[str, Any]) -> None:
@@ -108,8 +141,31 @@ def main() -> int:
     results = []
     for cluster in clusters:
         for path in cluster["paths"]:
-            results.append({"path": path, "title": cluster["title"], "canonical": None, "source_root": str(Path(path).parent), "reconciliation": {"method": cluster["method"], "name_titles": cluster["name_titles"], "face_clusters": cluster["face_clusters"]}})
-    _atomic_write(args.output, {"schema_version": 1, "source": "name_face_reconciliation", "report": {"clusters": len(clusters), "results": len(results)}, "results": results})
+            results.append({
+                "path": path,
+                "title": cluster["title"],
+                "canonical": None,
+                "source_root": str(Path(path).parent),
+                # Keep the review method/face labels on each row so the UI can
+                # filter face-first groups without reinterpreting titles.
+                "review_method": cluster["method"],
+                "face_cluster_labels": cluster["face_labels"] if cluster["face_label_eligible"] else [],
+                "face_cluster_ids": cluster["face_clusters"],
+                "cluster_label": cluster["face_labels"][0] if cluster["face_label_eligible"] else None,
+                "face_cluster_id": cluster["face_clusters"][0] if cluster["face_clusters"] else None,
+                "expected_identity": cluster["name_identities"][0] if len(cluster["name_identities"]) == 1 else None,
+                "reconciliation": {"method": cluster["method"], "name_titles": cluster["name_titles"], "face_clusters": cluster["face_clusters"]},
+            })
+    _atomic_write(
+        args.output,
+        {
+            "schema_version": 2,
+            "source": "name_face_reconciliation",
+            "cluster_policy": "face-only",
+            "report": {"clusters": len(clusters), "results": len(results)},
+            "results": results,
+        },
+    )
     print(json.dumps({"clusters": len(clusters), "results": len(results), "output": str(args.output)}, sort_keys=True))
     return 0
 

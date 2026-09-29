@@ -429,3 +429,88 @@ def test_profile_image_hash_match_is_high_confidence_but_not_apply_confidence(tm
     assert matched == ps.Identity("known_person", "manual", ())
     assert confidence == 0.99
     assert rule == "profile-image-sha256"
+
+
+def test_catalog_merges_normalized_canonical_variants_by_priority(tmp_path, monkeypatch) -> None:
+    registry_file = tmp_path / "project_registry.json"
+    registry_file.write_text(
+        json.dumps(
+            {
+                "blocked_tokens": [],
+                "preferred_alias_targets": {},
+                "entries": [{"canonical": "cherry_flute", "family": "reddit_subreddit", "aliases": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    aliases_file = tmp_path / "identity_aliases.json"
+    aliases_file.write_text(
+        json.dumps(
+            {
+                "identities": [
+                    {
+                        "id": "cherry_flute",
+                        "primary_folder": "Cherry_Flute",
+                        "display_names": ["Cherry Flute"],
+                        "search_terms": [],
+                        "status": "confirmed",
+                        "reddit": {"users": [], "subreddits": []},
+                        "notes": "",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    empty = tmp_path / "empty.txt"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ps, "PROJECT_REGISTRY_FILE", registry_file)
+    monkeypatch.setattr(ps, "METADAILY_IDENTITY_ALIASES_FILE", aliases_file)
+    monkeypatch.setattr(ps, "METADAILY_ACCOUNTS_FILE", empty)
+    monkeypatch.setattr(ps, "FRIENDS_FILE", empty)
+    monkeypatch.setattr(ps, "PSCRAPE_FILE", empty)
+    monkeypatch.setattr(ps, "IMDB_FILE", empty)
+    monkeypatch.setattr(ps, "STRONG_TEXT_SOURCE_FILES", [])
+    monkeypatch.setattr(ps, "WEAK_TEXT_SOURCE_FILES", [])
+    monkeypatch.setattr(ps, "REDDITDAILY_ROOT", tmp_path / "missing-rd")
+    monkeypatch.setattr(ps, "PSCRAPE_ROOT", tmp_path / "missing-ps")
+    monkeypatch.setenv("PICORG_CATALOG_CACHE", str(tmp_path / "cache.json"))
+
+    catalog, alias_index, _, _, _ = ps.load_identity_catalog()
+    matches = [item for item in catalog if ps.normalize_key(item.canonical) == "cherryflute"]
+    assert len(matches) == 1
+    assert matches[0].canonical == "Cherry_Flute"
+    assert matches[0].family == "metadaily"
+    assert ps.normalize_key("cherry_flute") in alias_index
+
+
+def test_redditdaily_folder_keeps_family_over_weak_follow(tmp_path, monkeypatch) -> None:
+    redditdaily_root = tmp_path / "redditdaily"
+    redditdaily_root.mkdir()
+    (redditdaily_root / "CuteHoneybun").mkdir()
+    (redditdaily_root / "csv_reports").mkdir()
+    follow_file = tmp_path / "follows.txt"
+    follow_file.write_text("CuteHoneybun\n", encoding="utf-8")
+    registry_file = tmp_path / "project_registry.json"
+    registry_file.write_text(
+        json.dumps({"blocked_tokens": [], "preferred_alias_targets": {}, "entries": []}),
+        encoding="utf-8",
+    )
+    empty = tmp_path / "empty.txt"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setattr(ps, "REDDITDAILY_ROOT", redditdaily_root)
+    monkeypatch.setattr(ps, "PSCRAPE_ROOT", tmp_path / "missing-ps")
+    monkeypatch.setattr(ps, "PROJECT_REGISTRY_FILE", registry_file)
+    monkeypatch.setattr(ps, "METADAILY_IDENTITY_ALIASES_FILE", empty)
+    monkeypatch.setattr(ps, "METADAILY_ACCOUNTS_FILE", empty)
+    monkeypatch.setattr(ps, "FRIENDS_FILE", empty)
+    monkeypatch.setattr(ps, "PSCRAPE_FILE", empty)
+    monkeypatch.setattr(ps, "IMDB_FILE", empty)
+    monkeypatch.setattr(ps, "STRONG_TEXT_SOURCE_FILES", [])
+    monkeypatch.setattr(ps, "WEAK_TEXT_SOURCE_FILES", [follow_file])
+    monkeypatch.setenv("PICORG_CATALOG_CACHE", str(tmp_path / "cache.json"))
+
+    catalog, _, _, _, _ = ps.load_identity_catalog()
+    cute = next(item for item in catalog if item.canonical == "CuteHoneybun")
+    assert cute.family == "redditdaily"
+    assert not any(item.canonical == "csv_reports" for item in catalog)

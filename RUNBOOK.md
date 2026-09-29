@@ -4,6 +4,10 @@
 
 Run the organizer conservatively and repeatably so canonical identity folders stay stable across intake roots when you trigger it manually.
 
+For the full local-identity-to-canonical-registry lifecycle, including the
+metadata-only Assorted-folder association step and the shared-registry owner
+approval boundary, see [`docs/IDENTITY_PROMOTION_WORKFLOW.md`](docs/IDENTITY_PROMOTION_WORKFLOW.md).
+
 ## Intake roots
 
 - `/mnt/elements16/@mixedpics`
@@ -22,7 +26,41 @@ Run the organizer conservatively and repeatably so canonical identity folders st
 4. Apply only if the dry pass is stable.
 5. Review the audit JSON after the run.
 
+For a read-only pre-release check of launcher syntax and the safety/UI/observer
+test surface, run `./picorg_release_check.sh`. Use `--full` for the complete
+pytest suite. This command never ingests, moves, rebuilds, starts services, or
+contacts an external provider.
+
 The authoritative scoring rules live in [`OPERATING_POLICY.md`](/opt/picorg/OPERATING_POLICY.md).
+
+## Review UI safety
+
+Install the production WSGI dependency before starting the LAN UI:
+
+```bash
+.venv/bin/pip install -r requirements-review.txt
+```
+
+`runweb.sh` uses Waitress by default. Clients on `192.168.2.0/24`, loopback,
+and link-local networks are unrestricted, while non-LAN clients require
+`PICORG_UI_TOKEN` for all UI/API access except health probes. Set
+`PICORG_UI_TRUSTED_CIDRS` to replace the trusted networks, or set
+`PICORG_UI_AUTH=1` to require tokens everywhere.
+Clicking a thumbnail opens a full-size modal viewer with Previous/Next
+navigation and the same audited identity assignment used by the grid.
+Keep `PICORG_UI_SERVER=flask` limited to local development and never expose
+the Flask development server to the LAN.
+
+For a reproducible setup, validate the resolver lock and hash export before
+installing optional stacks:
+
+```bash
+./verify_dependency_lock.sh
+UV_CACHE_DIR=/tmp/picorg-uv-cache uv sync --frozen --extra review
+```
+
+Add `--extra face`, `--extra insightface`, or `--extra uniface` only when that
+backend is required. Do not run `uv sync` during an active face extraction.
 
 ## Manual Production Run
 
@@ -32,6 +70,22 @@ Use this exact flow for periodic runs. Keep it manual and review the audit befor
 
 ```bash
 ./picorg_manual.sh inspect
+```
+
+For a single command that performs a fresh fingerprinted name/alias audit,
+precision-only gate, and high-confidence name moves (without face matching or
+the review UI), use:
+
+```bash
+./run_name_org.sh
+```
+
+Add `--ingest` when completed downloads should be moved into the intake area
+before the name audit. This also priority-quarantines exact duplicates found
+in intake roots while preserving the Metadaily/Redditdaily copies:
+
+```bash
+./run_name_org.sh --ingest
 ```
 
 ### 2. Run a dry pass
@@ -56,12 +110,13 @@ Optional OCR-assisted review on a known local Tesseract image:
 ### 4. Apply only when stable
 
 ```bash
-./picorg_manual.sh apply
+./picorg_manual.sh apply --audit-input /path/to/reviewed-audit.json
 ```
 
 ### 5. Re-read the audit
 
-- Confirm the apply report is consistent with the dry run.
+- Confirm the apply report is consistent with the dry run. The gated form
+  refuses to apply if any high-confidence source changed after review.
 - Verify that any moved folders stayed intact where possible.
 - Review `duplicates/` for exact-content collisions.
 
@@ -102,6 +157,13 @@ python3 picorg_sorter.py inspect --limit 20
 - If labeled precision is below `0.99`, or labeled recall is below `0.99`, stop and inspect the unmatched tail.
 - If the run is dominated by a new source family, update the identity registry before applying again.
 - If identical folders recur, expect them to land in `duplicates/`.
+
+The explicit `--apply-high-confidence` workflow uses a narrower gate for the
+name-move stage: precision must meet the configured threshold and the audit
+must contain at least one `>=0.95` high-confidence result. Low recall blocks a
+production sign-off, but does not by itself block these precision-qualified
+name moves. Face matching remains review-only until the full acceptance gate
+passes.
 
 ## Acceptance criteria
 
@@ -167,3 +229,37 @@ corrupt files, making manual review faster without uploading media.
 - `unmatched/` for manual follow-up.
 - `duplicates/` for duplicate content checks.
 - `_audit/` or the configured audit root for run history.
+
+## Confirmed identity learning loop
+
+A confirmed image is both an organization decision and a future face exemplar:
+
+1. Assign or confirm it in the review UI. The assignment endpoint is always a
+   queue-only action: it records the expected SHA-256 in both
+   `.cache/picorg/pending-review-assignments.json` and the durable
+   `.cache/picorg/identity_evidence.sqlite3` queue, and never moves media or
+   writes face markers. Use the explicit reconcile/apply step below to apply it.
+2. The decision remains joinable to the audit path, while the face marker is
+   relinked to the canonical destination. This prevents a moved file from
+   becoming a stale exemplar on the next rebuild.
+3. Rebuild the face database/gallery before the next matching pass. Confirmed,
+   existing SHA-verified markers are promoted first; remaining references are
+   selected by quality and visual diversity.
+4. Run the face review pipeline against the new gallery. Matches remain
+   review-only unless precision and safety gates pass; one confirmed image
+   never causes an automatic move by itself.
+
+Queued assignments are reportable with `reconcile_confirmed.py`'s default
+report-only mode. Apply them only after the rebuild and audit are complete;
+the SQLite queue is read alongside the compatibility JSON queue:
+
+```bash
+.venv/bin/python reconcile_confirmed.py --pending-assignments .cache/picorg/pending-review-assignments.json --evidence-db .cache/picorg/identity_evidence.sqlite3
+.venv/bin/python reconcile_confirmed.py --apply --pending-assignments .cache/picorg/pending-review-assignments.json --evidence-db .cache/picorg/identity_evidence.sqlite3
+```
+
+Use **Unassign** or move-history undo when an assignment is wrong. Both the
+canonical destination path and older audit/source paths are accepted, and the
+file, decision, and marker are restored together. Avoid deleting or renaming
+canonical identity files outside the UI because future matching relies on this
+durable path join.

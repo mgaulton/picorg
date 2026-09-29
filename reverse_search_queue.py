@@ -77,6 +77,18 @@ def queue_items(audit: Dict[str, object], limit: int, per_gallery: int) -> List[
                 "profile_url": None,
                 "evidence_urls": [],
                 "notes": "Do not upload without explicit permission; candidate requires independent corroboration.",
+                # Preserve detector provenance when a face audit supplies it.
+                # A future provider adapter can crop/query each face separately.
+                **(
+                    {"face_index": result["face_index"]}
+                    if isinstance(result.get("face_index"), int)
+                    else {}
+                ),
+                **(
+                    {"face_box": result["face_box"]}
+                    if isinstance(result.get("face_box"), list) and len(result["face_box"]) == 4
+                    else {}
+                ),
             }
         )
     candidates.sort(key=lambda item: (-int(item["priority"]), str(item["path"])))

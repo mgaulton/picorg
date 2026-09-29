@@ -2,12 +2,201 @@
   "decisions": [
     {
       "cluster_id": "new_creator",
-      "family": "review",
+      "family": "manual",
       "identity": "new_creator",
       "notes": "",
-      "saved_at": "2026-08-16T22:04:12.925740+00:00"
+      "saved_at": "2026-09-28T17:07:51.276943+00:00"
+    },
+    {
+      "cluster_id": "Fitresident",
+      "family": "manual",
+      "identity": "Fitresident",
+      "notes": "",
+      "saved_at": "2026-08-26T21:20:46.984804+00:00"
+    },
+    {
+      "cluster_id": "creator",
+      "family": "review",
+      "identity": "creator",
+      "notes": "",
+      "saved_at": "2026-09-28T17:07:58.739530+00:00"
+    },
+    {
+      "aliases": [
+        "rachelle_evans_fb"
+      ],
+      "cluster_id": "rachelle_evans_fb",
+      "family": "manual",
+      "identity": "Rachelle Evans",
+      "notes": "User-confirmed identity for Facebook redhead-group images; local PicOrg identity.",
+      "saved_at": "2026-09-23T20:55:41.593365+00:00"
+    },
+    {
+      "cluster_id": "hottiefreckles001",
+      "family": "manual",
+      "identity": "hottiefreckles001",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-25T19:48:31.738974+00:00"
+    },
+    {
+      "cluster_id": "fbhottie001",
+      "family": "manual",
+      "identity": "fbhottie001",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-25T20:08:52.508089+00:00"
+    },
+    {
+      "cluster_id": "Nursedudz1980",
+      "family": "manual",
+      "identity": "Nursedudz1980",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-25T20:49:21.815339+00:00"
+    },
+    {
+      "aliases": [
+        "nicolevalentinexxx",
+        "redhottie001"
+      ],
+      "cluster_id": "redhottie001",
+      "family": "manual",
+      "identity": "nicolevalentine",
+      "notes": "Assigned from modal viewer [identity correction: redhottie001 \u2192 nicolevalentinexxx]",
+      "saved_at": "2026-09-28T15:59:30.333663+00:00"
+    },
+    {
+      "cluster_id": "redhottie002",
+      "family": "manual",
+      "identity": "redhottie002",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T16:03:40.432617+00:00"
+    },
+    {
+      "cluster_id": "fienix",
+      "family": "manual",
+      "identity": "fienix",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T16:06:07.973287+00:00"
+    },
+    {
+      "cluster_id": "emma_myers",
+      "family": "manual",
+      "identity": "emma_myers",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T16:36:28.244325+00:00"
+    },
+    {
+      "cluster_id": "anya_taylorjoy",
+      "family": "manual",
+      "identity": "anya_taylorjoy",
+      "notes": "Created and assigned from cluster review",
+      "saved_at": "2026-09-28T16:52:39.385966+00:00"
+    },
+    {
+      "cluster_id": "gothgroup",
+      "family": "manual",
+      "identity": "gothgroup",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T17:01:38.241049+00:00"
+    },
+    {
+      "cluster_id": "wgp_liv",
+      "family": "manual",
+      "identity": "wgp_liv",
+      "notes": "Created and assigned from cluster review",
+      "saved_at": "2026-09-28T17:05:18.677250+00:00"
+    },
+    {
+      "cluster_id": "zoe_curly",
+      "family": "manual",
+      "identity": "zoe_curly",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T17:12:25.075461+00:00"
+    },
+    {
+      "cluster_id": "bondage",
+      "family": "manual",
+      "identity": "bondage",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T17:17:41.119675+00:00"
+    },
+    {
+      "cluster_id": "fbhottie003",
+      "family": "manual",
+      "identity": "fbhottie003",
+      "notes": "Created and assigned from cluster review",
+      "saved_at": "2026-09-28T17:27:56.152681+00:00"
+    },
+    {
+      "cluster_id": "susi_vidal",
+      "family": "manual",
+      "identity": "susi_vidal",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T18:06:48.587486+00:00"
+    },
+    {
+      "cluster_id": "india_masarra",
+      "family": "manual",
+      "identity": "india_masarra",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T18:08:24.585567+00:00"
+    },
+    {
+      "cluster_id": "nerdy",
+      "family": "manual",
+      "identity": "nerdy",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T18:22:00.828251+00:00"
+    },
+    {
+      "cluster_id": "winona_ryder",
+      "family": "manual",
+      "identity": "winona_ryder",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T18:25:30.180158+00:00"
+    },
+    {
+      "cluster_id": "skylar_calico",
+      "family": "manual",
+      "identity": "skylar_calico",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T20:15:20.517619+00:00"
+    },
+    {
+      "cluster_id": "redhottie003",
+      "family": "manual",
+      "identity": "redhottie003",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T20:27:51.937796+00:00"
+    },
+    {
+      "cluster_id": "meaghanandjack",
+      "family": "manual",
+      "identity": "meaghanandjack",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T21:02:58.496739+00:00"
+    },
+    {
+      "cluster_id": "amberglenn",
+      "family": "manual",
+      "identity": "amberglenn",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T21:07:08.613308+00:00"
+    },
+    {
+      "cluster_id": "redhottie004",
+      "family": "manual",
+      "identity": "redhottie004",
+      "notes": "Assigned from modal viewer",
+      "saved_at": "2026-09-28T21:07:44.210051+00:00"
+    },
+    {
+      "cluster_id": "fbhottie005",
+      "family": "manual",
+      "identity": "fbhottie005",
+      "notes": "Created and assigned from cluster review",
+      "saved_at": "2026-09-28T21:14:21.171127+00:00"
     }
   ],
   "schema_version": 1,
-  "updated": "2026-08-16T22:04:12.925778+00:00"
+  "updated": "2026-09-28T21:18:55.718356+00:00"
 }

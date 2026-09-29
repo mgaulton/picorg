@@ -42,3 +42,16 @@ def test_skips_pairs_without_cached_embeddings():
     )
     assert report["skipped_pairs"] == 1
     assert report["pair_count"] == 2
+
+def test_reports_when_no_threshold_meets_fmr_limit():
+    report = benchmark.evaluate_pairs(
+        [
+            {"path_a": "a", "path_b": "b", "label": "genuine"},
+            {"path_a": "a", "path_b": "c", "label": "impostor"},
+        ],
+        {"a": [0.0, 0.0], "b": [0.1, 0.0], "c": [0.0, 0.0]},
+        max_fmr=0.0,
+    )
+    assert report["selected"] is None
+    assert report["calibration_status"] == "no_threshold_meets_fmr"
+    assert report["operating_points"]

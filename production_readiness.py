@@ -22,6 +22,8 @@ def check(
     min_impostor_pairs: int = 100,
     max_fmr_ci95: float = 0.01,
     max_fnmr_ci95: float = 0.01,
+    marker_health: dict | None = None,
+    min_marker_hash_ratio: float = 1.0,
 ) -> list[str]:
     errors: list[str] = []
     for field, minimum in (("ground_truth_precision", min_precision), ("ground_truth_recall", min_recall)):
@@ -37,6 +39,14 @@ def check(
                 errors.append(f"preflight {field}={counts[field]}")
     if not ui_token:
         errors.append("PICORG_UI_TOKEN is not configured for LAN exposure")
+    if marker_health is not None:
+        confirmed = int(marker_health.get("confirmed", 0) or 0)
+        hashed = int(marker_health.get("confirmed_with_sha256", 0) or 0)
+        ratio = hashed / confirmed if confirmed else 0.0
+        if confirmed == 0:
+            errors.append("confirmed face markers are missing")
+        elif ratio < min_marker_hash_ratio:
+            errors.append(f"face marker hash coverage {ratio:.4f} < {min_marker_hash_ratio:.4f}")
     if backend == "insightface" and not model_license_confirmed:
         errors.append("InsightFace model license has not been confirmed for this deployment")
     if benchmark is None:
@@ -72,10 +82,13 @@ def main() -> int:
     parser.add_argument("--min-impostor-pairs", type=int, default=100)
     parser.add_argument("--max-fmr-ci95", type=float, default=0.01)
     parser.add_argument("--max-fnmr-ci95", type=float, default=0.01)
+    parser.add_argument("--markers", type=Path, help="optional report from audit_face_marker_health.py")
+    parser.add_argument("--min-marker-hash-ratio", type=float, default=1.0)
     args = parser.parse_args()
     audit = json.loads(args.audit.read_text(encoding="utf-8"))
     preflight = json.loads(args.preflight.read_text(encoding="utf-8")) if args.preflight else None
     benchmark = json.loads(args.benchmark.read_text(encoding="utf-8"))
+    marker_health = json.loads(args.markers.read_text(encoding="utf-8")) if args.markers else None
     errors = check(
         audit.get("report", audit),
         preflight,
@@ -89,6 +102,8 @@ def main() -> int:
         min_impostor_pairs=args.min_impostor_pairs,
         max_fmr_ci95=args.max_fmr_ci95,
         max_fnmr_ci95=args.max_fnmr_ci95,
+        marker_health=marker_health,
+        min_marker_hash_ratio=args.min_marker_hash_ratio,
     )
     result = {"production_ready": not errors, "errors": errors}
     print(json.dumps(result, indent=2, sort_keys=True))

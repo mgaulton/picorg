@@ -108,6 +108,20 @@ def evaluate_pairs(pairs: Iterable[Mapping[str, Any]], embeddings: Mapping[str, 
             "false_nonmatches": false_nonmatches,
         })
     eligible = [point for point in operating if point["fmr"] <= max_fmr]
+    if not eligible:
+        # Report an explicit failed calibration instead of crashing with
+        # ``min([])``. The safety gate treats a missing selected point as
+        # fail-closed while operators retain all operating points for diagnosis.
+        return {
+            "pair_count": len(scored),
+            "skipped_pairs": skipped,
+            "genuine_pairs": genuine,
+            "impostor_pairs": impostor,
+            "max_fmr": max_fmr,
+            "selected": None,
+            "calibration_status": "no_threshold_meets_fmr",
+            "operating_points": operating,
+        }
     selected = min(eligible, key=lambda point: (point["fnmr"], point["threshold"]))
     selected["fmr_ci95"] = wilson_interval(selected["false_matches"], impostor)
     selected["fnmr_ci95"] = wilson_interval(selected["false_nonmatches"], genuine)
@@ -118,6 +132,7 @@ def evaluate_pairs(pairs: Iterable[Mapping[str, Any]], embeddings: Mapping[str, 
         "impostor_pairs": impostor,
         "max_fmr": max_fmr,
         "selected": selected,
+        "calibration_status": "ok",
         "operating_points": operating,
     }
 

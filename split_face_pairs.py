@@ -24,8 +24,14 @@ def split_pairs(pairs: list[dict], fraction: float = 0.2, seed: str = "picorg") 
         ranked = sorted(paths, key=lambda path: hashlib.sha256(f"{seed}:{identity}:{path}".encode()).hexdigest())
         count = max(1, round(len(ranked) * fraction)) if len(ranked) >= 2 else 0
         heldout.update(ranked[:count])
-    evaluation = [pair for pair in pairs if str(pair.get("path_a")) in heldout and str(pair.get("path_b")) in heldout]
-    training = [pair for pair in pairs if pair not in evaluation]
+    # Partition in one pass. Comparing each dict against the evaluation list
+    # makes this O(number_of_pairs * number_of_heldout_pairs), which becomes
+    # prohibitively slow for the full labelled cache.
+    training = []
+    evaluation = []
+    for pair in pairs:
+        is_evaluation = str(pair.get("path_a")) in heldout and str(pair.get("path_b")) in heldout
+        (evaluation if is_evaluation else training).append(pair)
     return training, evaluation
 
 

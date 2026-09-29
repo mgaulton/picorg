@@ -19,7 +19,9 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict
 from functools import lru_cache
@@ -43,9 +45,13 @@ PROTECTED_SOURCE_ROOTS = (
 DEST_ROOT = Path("/mnt/elements16/@mixedpics_sorted")
 DEFAULT_TEMP_ROOT = Path(tempfile.gettempdir())
 DEFAULT_AUDIT_ROOT = DEFAULT_TEMP_ROOT / "picorg_sorted_audit"
-DEFAULT_CATALOG_CACHE = DEFAULT_TEMP_ROOT / "picorg_identity_catalog_cache.json"
-DEFAULT_DRY_RUN_CACHE = DEFAULT_TEMP_ROOT / "picorg_dry_run_cache.json"
-DEFAULT_RESOLVER_VERSION = "2026-07-31.26"
+# Audits and their caches must survive reboot/cleanup.  Keep the temporary
+# directory for legacy audit output, but store reusable state under PicOrg's
+# durable project cache unless the operator explicitly overrides it.
+DEFAULT_CACHE_ROOT = Path(os.environ.get("PICORG_CACHE_ROOT", "/opt/picorg/.cache/picorg"))
+DEFAULT_CATALOG_CACHE = DEFAULT_CACHE_ROOT / "identity_catalog_cache.json"
+DEFAULT_DRY_RUN_CACHE = DEFAULT_CACHE_ROOT / "dry_run_cache.json"
+DEFAULT_RESOLVER_VERSION = "2026-07-31.27"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -55,7 +61,11 @@ FRIENDS_FILE = Path("/opt/redditgrab/friend.txt")
 PSCRAPE_FILE = Path("/opt/pscrape/redditors.txt")
 IMDB_FILE = Path("/opt/list.imdburl")
 METADAILY_ACCOUNTS_FILE = Path("/opt/metadaily/social_accounts.txt")
-METADAILY_IDENTITY_ALIASES_FILE = Path("/opt/metadaily/data/identity_aliases.json")
+# The shared registry is the canonical identity authority.  The former
+# MetaDaily-local file is legacy and is never selected implicitly.
+METADAILY_IDENTITY_ALIASES_FILE = Path(
+    os.environ.get("PICORG_IDENTITY_REGISTRY", "/opt/shared/identity_aliases.json")
+)
 PROFILE_VERIFICATION_FILE = Path("/opt/picorg/identity_profile_verification.json")
 PROFILE_IMAGE_INDEX_FILE = Path(
     os.environ.get("PICORG_PROFILE_IMAGE_INDEX", "/opt/picorg/.profile_image_index.disabled")
@@ -75,6 +85,11 @@ DEFAULT_BLOCKED_TOKENS = {
     "pics",
     "ginger",
     "redhead",
+    "redheads",
+    "redhair",
+    "freckles",
+    "girlswithglasses",
+    "girlwithglasses",
     "tor",
     "iss",
     "slut",
@@ -124,8 +139,12 @@ IGNORED_DIR_NAMES = {
     "tools",
     "AppData",
     "ARCHIVE",
+    "csv_reports",
+    "thumbnails",
+    "thumb",
 }
 
+# Used when resolving ambiguous exact alias hits during matching.
 FAMILY_PRIORITY = {
     "redditdaily": 50,
     "metadaily": 45,
@@ -137,6 +156,38 @@ FAMILY_PRIORITY = {
     "reddit_subreddit": 5,
     "reddit_follow": 5,
 }
+
+# Used when merging catalog entries that share a normalized canonical key.
+# Manual/review overlays and Metadaily beat redditdaily; redditdaily beats weak imports.
+CATALOG_MERGE_PRIORITY = {
+    "manual": 100,
+    "review": 95,
+    "metadaily": 90,
+    "profile_verified": 85,
+    "redditdaily": 80,
+    "reddit_friends": 50,
+    "pscrape": 45,
+    "imdb": 40,
+    "reddit_subreddit": 20,
+    "reddit_follow": 10,
+}
+
+# Descriptive collection labels are useful review context but are weak
+# identity evidence.  Keep them below curated registry/manual identities.
+GENERIC_COLLECTION_KEYS = {
+    "redhead",
+    "redheads",
+    "ginger",
+    "gingers",
+    "redhair",
+    "freckle",
+    "freckles",
+    "girlswithglasses",
+    "girlwithglasses",
+    "glasses",
+}
+TRUSTED_IDENTITY_FAMILIES = {"metadaily", "redditdaily", "profile_verified", "manual", "review"}
+GENERIC_COLLECTION_CONFIDENCE_CAP = 0.60
 
 ARTIFACT_TOKENS = {
     "thumb",
@@ -529,6 +580,19 @@ def is_generic_identity_token(value: str) -> bool:
     return False
 
 
+def is_generic_collection_identity(identity: Identity) -> bool:
+    """Return whether an identity is a weak descriptive collection label.
+
+    Curated registry and manually confirmed identities remain trusted even if
+    their display name happens to contain a descriptive word.
+    """
+    if identity.family in TRUSTED_IDENTITY_FAMILIES:
+        return False
+    keys = {normalize_key(identity.canonical)}
+    keys.update(normalize_key(alias) for alias in identity.aliases)
+    return bool(keys & GENERIC_COLLECTION_KEYS)
+
+
 def should_import_weak_identity(canonical: str, aliases: Iterable[str]) -> bool:
     if is_generic_identity_token(canonical):
         return False
@@ -698,6 +762,7 @@ def load_identity_catalog() -> Tuple[
     identities: List[Identity] = []
     alias_index: Dict[str, Set[Identity]] = defaultdict(set)
     canonical_index: Dict[str, Identity] = {}
+    canonical_by_key: Dict[str, str] = {}
     token_index: Dict[str, Set[Identity]] = defaultdict(set)
     global PROJECT_BLOCKED_TOKENS, PROJECT_AMBIGUOUS_TOKENS
     PROJECT_BLOCKED_TOKENS = set()
@@ -710,6 +775,29 @@ def load_identity_catalog() -> Tuple[
         for token in tokenize(normalize(alias)):
             if len(token) >= 5 or any(char.isdigit() for char in token):
                 token_index[token].add(identity)
+
+    def filter_aliases(
+        canonical: str,
+        aliases: Iterable[str],
+        *,
+        source_kind: str,
+    ) -> Tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                alias.strip()
+                for alias in aliases
+                if alias
+                and alias.strip()
+                and alias.strip() != canonical
+                and (
+                    source_kind == "registry"
+                    or (
+                        normalize_key(alias) not in DEFAULT_BLOCKED_TOKENS
+                        and normalize_key(alias) not in PROJECT_BLOCKED_TOKENS
+                    )
+                )
+            )
+        )
 
     def add_identity(
         canonical: str,
@@ -725,49 +813,43 @@ def load_identity_catalog() -> Tuple[
             return
         if source_kind == "weak" and not should_import_weak_identity(canonical, aliases):
             return
-        if canonical in canonical_index:
-            existing = canonical_index[canonical]
-            merged = tuple(
-                dict.fromkeys(
-                    alias
-                    for alias in (*existing.aliases, *tuple(aliases))
-                    if alias
-                    and alias.strip()
-                    and alias.strip() != canonical
-                    and (
-                        source_kind == "registry"
-                        or (
-                            normalize_key(alias) not in DEFAULT_BLOCKED_TOKENS
-                            and normalize_key(alias) not in PROJECT_BLOCKED_TOKENS
-                        )
-                    )
-                )
+        incoming_aliases = tuple(aliases)
+        key = normalize_key(canonical)
+        existing_name = canonical_by_key.get(key)
+        if existing_name and existing_name in canonical_index:
+            existing = canonical_index[existing_name]
+            existing_rank = CATALOG_MERGE_PRIORITY.get(existing.family, 0)
+            incoming_rank = CATALOG_MERGE_PRIORITY.get(family, 0)
+            if incoming_rank > existing_rank:
+                kept_canonical = canonical
+                kept_family = family
+            else:
+                kept_canonical = existing.canonical
+                kept_family = existing.family
+            merged_aliases = filter_aliases(
+                kept_canonical,
+                (*existing.aliases, existing.canonical, canonical, *incoming_aliases),
+                source_kind=source_kind,
             )
-            ident = Identity(canonical=canonical, family=existing.family, aliases=merged)
-            canonical_index[canonical] = ident
+            # Keep prior non-canonical spellings as aliases when spelling changes.
+            if existing.canonical != kept_canonical and existing.canonical not in merged_aliases:
+                merged_aliases = tuple(dict.fromkeys((*merged_aliases, existing.canonical)))
+            if canonical != kept_canonical and canonical not in merged_aliases:
+                merged_aliases = tuple(dict.fromkeys((*merged_aliases, canonical)))
+            ident = Identity(canonical=kept_canonical, family=kept_family, aliases=merged_aliases)
+            if existing_name != kept_canonical:
+                canonical_index.pop(existing_name, None)
+            canonical_index[kept_canonical] = ident
+            canonical_by_key[key] = kept_canonical
             identities[identities.index(existing)] = ident
         else:
-            filtered_aliases = tuple(
-                dict.fromkeys(
-                    alias.strip()
-                    for alias in aliases
-                    if alias
-                    and alias.strip()
-                    and alias.strip() != canonical
-                    and (
-                        source_kind == "registry"
-                        or (
-                            normalize_key(alias) not in DEFAULT_BLOCKED_TOKENS
-                            and normalize_key(alias) not in PROJECT_BLOCKED_TOKENS
-                        )
-                    )
-                )
-            )
+            filtered_aliases = filter_aliases(canonical, incoming_aliases, source_kind=source_kind)
             ident = Identity(canonical=canonical, family=family, aliases=filtered_aliases)
             canonical_index[canonical] = ident
+            canonical_by_key[key] = canonical
             identities.append(ident)
-        ident = canonical_index[canonical]
-        for alias in {canonical, *ident.aliases}:
+        ident = canonical_index[canonical_by_key[key]]
+        for alias in {ident.canonical, *ident.aliases}:
             register_alias(alias, ident)
 
     def add_text_alias_file(path: Path, family: str, *, source_kind: str = "strong") -> None:
@@ -794,6 +876,34 @@ def load_identity_catalog() -> Tuple[
             aliases = entry.get("aliases") or []
             alias_values = {canonical, *[str(alias).strip() for alias in aliases if str(alias).strip()]}
             add_identity(canonical, family, alias_values, source_kind="registry")
+
+    def add_directory_identities(root: Path, family: str) -> None:
+        try:
+            if not root.exists():
+                return
+            with os.scandir(root) as entries:
+                for entry in entries:
+                    name = entry.name
+                    if name in IGNORED_DIR_NAMES or name.startswith("."):
+                        continue
+                    if family == "redditdaily" and name in {
+                        "downloads",
+                        "downloads_backup",
+                        "cache",
+                        "backups",
+                        "legacy_backups",
+                        "csv_reports",
+                        "thumbnails",
+                    }:
+                        continue
+                    try:
+                        if not entry.is_dir(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    add_identity(name, family, {name})
+        except OSError:
+            return
 
     if PROJECT_REGISTRY_FILE.exists():
         try:
@@ -916,30 +1026,51 @@ def load_identity_catalog() -> Tuple[
                         aliases.add(current_label)
                     add_identity(slugify(slug), "metadaily", aliases)
 
+    # Redditdaily / pscrape folders before weak follow lists so RD-only names
+    # keep family=redditdaily instead of being swallowed as reddit_follow.
+    add_directory_identities(REDDITDAILY_ROOT, "redditdaily")
+    add_directory_identities(PSCRAPE_ROOT, "pscrape")
+
     for path in STRONG_TEXT_SOURCE_FILES:
         add_text_alias_file(path, "reddit_subreddit", source_kind="strong")
     for path in WEAK_TEXT_SOURCE_FILES:
         add_text_alias_file(path, "reddit_follow", source_kind="weak")
 
-    for root, family in ((REDDITDAILY_ROOT, "redditdaily"), (PSCRAPE_ROOT, "pscrape")):
-        try:
-            if not root.exists():
-                continue
-            with os.scandir(root) as entries:
-                for entry in entries:
-                    name = entry.name
-                    if name in IGNORED_DIR_NAMES or name.startswith("."):
-                        continue
-                    if family == "redditdaily" and name in {"downloads", "downloads_backup", "cache", "backups", "legacy_backups"}:
-                        continue
-                    try:
-                        if not entry.is_dir(follow_symlinks=False):
-                            continue
-                    except OSError:
-                        continue
-                    add_identity(name, family, {name})
-        except OSError:
+    # Preferred alias targets also collapse known duplicate identity rows
+    # (e.g. deewilliamsxxx → deewilliams) after all sources are loaded.
+    for alias_key, target_key in list(preferred_alias_targets.items()):
+        source_name = canonical_by_key.get(alias_key)
+        target_name = canonical_by_key.get(target_key)
+        if not source_name or not target_name or source_name == target_name:
             continue
+        source = canonical_index.get(source_name)
+        target = canonical_index.get(target_name)
+        if source is None or target is None:
+            continue
+        kept_family = (
+            source.family
+            if CATALOG_MERGE_PRIORITY.get(source.family, 0) > CATALOG_MERGE_PRIORITY.get(target.family, 0)
+            else target.family
+        )
+        kept_canonical = target.canonical
+        merged_aliases = tuple(
+            dict.fromkeys(
+                alias
+                for alias in (*target.aliases, target.canonical, source.canonical, *source.aliases)
+                if alias and alias != kept_canonical
+            )
+        )
+        updated = Identity(canonical=kept_canonical, family=kept_family, aliases=merged_aliases)
+        drop_names = {source.canonical, target.canonical}
+        identities[:] = [item for item in identities if item.canonical not in drop_names]
+        for name in drop_names:
+            canonical_index.pop(name, None)
+        identities.append(updated)
+        canonical_index[kept_canonical] = updated
+        canonical_by_key[normalize_key(kept_canonical)] = kept_canonical
+        canonical_by_key[normalize_key(source.canonical)] = kept_canonical
+        canonical_by_key[alias_key] = kept_canonical
+        canonical_by_key[target_key] = kept_canonical
 
     # Add a few useful aliases from a strict subset of redditdaily folder names.
     # This helps files that mention display names rather than canonical folder names.
@@ -957,9 +1088,8 @@ def load_identity_catalog() -> Tuple[
             updated = Identity(canonical=ident.canonical, family=ident.family, aliases=merged)
             canonical_index[ident.canonical] = updated
             identities[identities.index(ident)] = updated
-            for alias in {updated.canonical, *updated.aliases}:
-                register_alias(alias, updated)
 
+    identities, alias_index, canonical_index, token_index = rebuild_catalog_indexes(identities)
     build_identity_scoring_cache(identities)
     write_catalog_cache(cache_file, current_state, identities, preferred_alias_targets)
     return identities, alias_index, canonical_index, token_index, preferred_alias_targets
@@ -1236,16 +1366,20 @@ def best_identity_match(
 
     def consider(identity: Identity, confidence: float, rule: str) -> None:
         nonlocal best
-        if confidence > best[1]:
-            best = (identity, confidence, rule)
+        effective_confidence = confidence
+        if is_generic_collection_identity(identity):
+            effective_confidence = min(confidence, GENERIC_COLLECTION_CONFIDENCE_CAP)
+            rule = f"generic-fallback:{rule}"
+        if effective_confidence > best[1]:
+            best = (identity, effective_confidence, rule)
             return
-        if confidence == best[1]:
+        if effective_confidence == best[1]:
             current_best = best[0]
             if current_best and FAMILY_PRIORITY.get(identity.family, 0) > FAMILY_PRIORITY.get(current_best.family, 0):
-                best = (identity, confidence, rule)
+                best = (identity, effective_confidence, rule)
                 return
             if current_best is None:
-                best = (identity, confidence, rule)
+                best = (identity, effective_confidence, rule)
 
     def is_ambiguous_key(value: str) -> bool:
         return normalize_key(value) in PROJECT_AMBIGUOUS_TOKENS
@@ -1593,6 +1727,9 @@ def run_dry(root_paths: Sequence[Path], apply: bool = False) -> Tuple[List[Match
     ocr_matches = 0
     cached_roots = 0
     root_cache_state_payload: Dict[str, Dict[str, object]] = {}
+    progress_interval = max(1.0, float(os.environ.get("PICORG_PROGRESS_SECONDS", "15")))
+    progress_started = time.monotonic()
+    last_progress = progress_started
 
     def add_summary(summary: Dict[str, object]) -> None:
         nonlocal ground_truth_total, ground_truth_correct, ground_truth_predicted
@@ -1639,6 +1776,8 @@ def run_dry(root_paths: Sequence[Path], apply: bool = False) -> Tuple[List[Match
                 }
                 continue
         root_start = len(results)
+        root_progress_started = time.monotonic()
+        root_last_progress = root_progress_started
         root_metrics = Counter()
         root_confidence_buckets = Counter()
         root_family_hits = Counter()
@@ -1650,6 +1789,18 @@ def run_dry(root_paths: Sequence[Path], apply: bool = False) -> Tuple[List[Match
         root_ocr_improved = 0
         root_ocr_matches = 0
         for path in walk_media_files(root):
+            now_monotonic = time.monotonic()
+            processed_root = len(results) - root_start
+            if now_monotonic - root_last_progress >= progress_interval:
+                elapsed = max(0.1, now_monotonic - root_progress_started)
+                total_elapsed = max(0.1, now_monotonic - progress_started)
+                print(
+                    f"name audit: heartbeat root={root.name} processed={processed_root} "
+                    f"total={len(results)} elapsed={total_elapsed:.0f}s "
+                    f"rate={processed_root / elapsed:.1f}/s",
+                    flush=True,
+                )
+                root_last_progress = now_monotonic
             identity, confidence, rule = best_identity_match(
                 path,
                 root,
@@ -1857,9 +2008,52 @@ def write_audit(
         "report": report,
         "results": [asdict(result) for result in results],
     }
+    if os.environ.get("PICORG_AUDIT_FINGERPRINTS") == "1":
+        fingerprints: Dict[str, str] = {}
+        for result in results:
+            if not result.family or not result.canonical or result.confidence < DEFAULT_APPLY_MIN_CONFIDENCE:
+                continue
+            try:
+                fingerprints[result.path] = file_sha256(Path(result.path))
+            except OSError:
+                fingerprints[result.path] = "missing"
+        payload["source_fingerprints"] = fingerprints
+        report["fingerprinted_sources"] = len(fingerprints)
     path = audit_path(run_id, audit_root)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return path
+
+
+def load_gated_audit(path: Path) -> Tuple[List[MatchResult], Dict[str, object], str]:
+    """Load an immutable apply audit and verify its high-confidence sources."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"cannot read gated audit: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"invalid gated audit payload: {path}")
+    results = _results_from_payload(payload.get("results"))
+    fingerprints = payload.get("source_fingerprints")
+    if results is None or not isinstance(fingerprints, dict):
+        raise RuntimeError("gated audit lacks typed results or source fingerprints")
+    high_confidence = [result for result in results if result.family and result.canonical and result.confidence >= DEFAULT_APPLY_MIN_CONFIDENCE]
+    expected_paths = {result.path for result in high_confidence}
+    if set(str(key) for key in fingerprints) != expected_paths:
+        raise RuntimeError("gated audit fingerprints do not cover exactly its high-confidence results")
+    changed: List[str] = []
+    for result in high_confidence:
+        try:
+            current = file_sha256(Path(result.path))
+        except OSError:
+            current = "missing"
+        if current != str(fingerprints.get(result.path)):
+            changed.append(result.path)
+    if changed:
+        raise RuntimeError("gated audit source files changed; rerun dry-run: " + ", ".join(changed[:3]))
+    report = payload.get("report")
+    if not isinstance(report, dict):
+        raise RuntimeError("gated audit report is missing")
+    return results, report, str(payload.get("run_id") or path.stem)
 
 
 def result_to_sidecar(result: MatchResult, source_path: Path, dest_path: Optional[Path], run_id: str) -> Dict[str, object]:
@@ -2133,6 +2327,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     dry.add_argument("--audit-root", type=Path, default=DEFAULT_AUDIT_ROOT, help="Directory for automatic audit JSON")
     dry.add_argument("--limit", type=int, default=40, help="Summary row limit")
 
+    gated = sub.add_parser("apply-audit", help="Apply only an unchanged, fingerprinted audit")
+    gated.add_argument("--audit", type=Path, required=True, help="Fingerprint-enabled audit JSON")
+    gated.add_argument("--dest-root", type=Path, default=DEST_ROOT, help="Canonical destination root")
+    gated.add_argument("--audit-root", type=Path, default=DEFAULT_AUDIT_ROOT, help="Directory for apply audit output")
+    gated.add_argument("--limit", type=int, default=40, help="Summary row limit")
+
     manifest = sub.add_parser("manifest", help="Export the identity manifest as JSON")
     manifest.add_argument("--output", type=Path, required=True)
 
@@ -2160,6 +2360,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"{family}: {count}")
         for identity in catalog[: args.limit]:
             print(f"{identity.family}/{identity.canonical} | aliases={len(identity.aliases)}")
+        return 0
+
+    if args.command == "apply-audit":
+        try:
+            results, report, source_run_id = load_gated_audit(args.audit)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        run_id = make_run_id()
+        try:
+            apply_report = apply_results(results, args.dest_root, args.audit_root, run_id)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        report = dict(report)
+        report["applied"] = True
+        report["apply"] = apply_report
+        report["gated_audit"] = str(args.audit)
+        report["gated_source_run_id"] = source_run_id
+        audit_file = write_audit(results, report, run_id, args.audit_root)
+        report["audit_file"] = str(audit_file)
+        print_summary(results, report, limit=args.limit)
+        print(f"audit: {audit_file}")
         return 0
 
     roots = args.root if args.root else DEFAULT_INTAKE_ROOTS

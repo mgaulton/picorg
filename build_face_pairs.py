@@ -10,20 +10,53 @@ from pathlib import Path
 from typing import Any
 
 
-def build_pairs(decisions_path: Path, embeddings_path: Path, min_per_identity: int = 2) -> list[dict[str, Any]]:
-    decisions = json.loads(decisions_path.read_text(encoding="utf-8")).get("decisions", [])
+def build_pairs(
+    decisions_path: Path,
+    embeddings_path: Path,
+    min_per_identity: int = 2,
+    image_decisions_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    decisions_payload = json.loads(decisions_path.read_text(encoding="utf-8"))
+    decisions = decisions_payload.get("decisions", [])
+    if image_decisions_path:
+        image_payload = json.loads(image_decisions_path.read_text(encoding="utf-8"))
+        # The ledger is append-only. Resolve the newest decision per path
+        # before building labels so a later correction/rejection supersedes
+        # an older confirmation instead of leaking stale pairs into training.
+        latest_by_path: dict[str, tuple[int, dict[str, Any]]] = {}
+        for index, decision in enumerate(image_payload.get("decisions", [])):
+            path = str(decision.get("path") or "")
+            if not path:
+                continue
+            current = latest_by_path.get(path)
+            timestamp = str(decision.get("saved_at") or "")
+            if current is None or (timestamp, index) >= (str(current[1].get("saved_at") or ""), current[0]):
+                latest_by_path[path] = (index, decision)
+        decisions = [row[1] for row in latest_by_path.values()]
     records = json.loads(embeddings_path.read_text(encoding="utf-8")).get("records", {})
-    groups: list[tuple[str, list[str]]] = []
+    grouped: dict[str, set[str]] = {}
+    display_names: dict[str, str] = {}
     for decision in decisions:
         if decision.get("status") != "confirmed":
             continue
-        paths = [
+        identity = str(decision.get("identity", "")).strip()
+        if not identity:
+            continue
+        # Image-level ledgers use `path`; cluster ledgers use `sample_paths`.
+        candidate_paths = [decision.get("path")] if image_decisions_path else decision.get("sample_paths", [])
+        key = identity.casefold()
+        paths = grouped.setdefault(key, set())
+        display_names.setdefault(key, identity)
+        paths.update(
             str(path)
-            for path in decision.get("sample_paths", [])
-            if isinstance(records.get(path), dict) and isinstance(records[path].get("embedding"), list)
-        ]
-        if len(paths) >= min_per_identity:
-            groups.append((str(decision.get("identity", "")), sorted(set(paths))))
+            for path in candidate_paths
+            if path and isinstance(records.get(str(path)), dict) and isinstance(records[str(path)].get("embedding"), list)
+        )
+    groups = [
+        (display_names[key], sorted(paths))
+        for key, paths in grouped.items()
+        if len(paths) >= min_per_identity
+    ]
     groups.sort(key=lambda item: item[0])
     pairs: list[dict[str, Any]] = []
     for identity, paths in groups:
@@ -43,10 +76,11 @@ def main() -> int:
     parser.add_argument("--embeddings", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--min-per-identity", type=int, default=2)
+    parser.add_argument("--image-decisions", type=Path, help="prefer individually confirmed image decisions over mixed cluster samples")
     args = parser.parse_args()
     if args.min_per_identity < 2:
         parser.error("--min-per-identity must be at least 2")
-    pairs = build_pairs(args.decisions, args.embeddings, args.min_per_identity)
+    pairs = build_pairs(args.decisions, args.embeddings, args.min_per_identity, args.image_decisions)
     args.output.write_text(json.dumps(pairs, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"pairs": len(pairs), "output": str(args.output)}, sort_keys=True))
     return 0

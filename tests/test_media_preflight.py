@@ -13,6 +13,12 @@ def test_classify_path_distinguishes_missing_and_supported(tmp_path):
     assert media_preflight.classify_path(str(video)) == "unsupported_extension"
 
 
+def test_classify_path_skips_thumbnail_names(tmp_path):
+    image = tmp_path / "person-300px.jpg"
+    image.write_bytes(b"thumbnail")
+    assert media_preflight.classify_path(str(image)) == "thumbnail"
+
+
 def test_verify_images_rejects_invalid_data(tmp_path):
     image = tmp_path / "invalid.jpg"
     image.write_bytes(b"not-an-image")
@@ -39,3 +45,11 @@ def test_verify_images_classifies_oversized_without_decoding_pixels(tmp_path):
     image = tmp_path / "large.png"
     Image.new("RGB", (20, 20)).save(image)
     assert media_preflight.classify_path(str(image), verify_image=True, max_pixels=100) == "oversized"
+
+
+def test_classify_path_converts_stat_io_errors_to_unreadable(monkeypatch, tmp_path):
+    def raise_io_error(_path):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(media_preflight.Path, "exists", raise_io_error)
+    assert media_preflight.classify_path(str(tmp_path / "degraded.jpg")) == "unreadable"

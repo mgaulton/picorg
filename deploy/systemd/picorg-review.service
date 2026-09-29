@@ -1,0 +1,20 @@
+[Unit]
+Description=PicOrg LAN review UI
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/picorg
+Environment=HOST=0.0.0.0
+Environment=PORT=8788
+Environment=USE_EXISTING_FACE_AUDIT=1
+Environment=REUSE_EXISTING_PREFLIGHT=1
+ExecStart=/opt/picorg/runweb.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

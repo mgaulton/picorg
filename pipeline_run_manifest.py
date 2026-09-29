@@ -17,6 +17,11 @@ def main() -> int:
     parser.add_argument("--audit", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--backend", default="dlib")
+    parser.add_argument("--model-id", default="unknown")
+    parser.add_argument("--detector", default="unknown")
+    parser.add_argument("--threshold", type=float)
+    parser.add_argument("--license-status", default="unverified")
+    parser.add_argument("--cache-root", type=Path)
     args = parser.parse_args()
     raw = args.audit.read_bytes()
     audit = json.loads(raw)
@@ -27,6 +32,11 @@ def main() -> int:
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "face_backend": args.backend,
+        "model_id": args.model_id,
+        "detector": args.detector,
+        "threshold": args.threshold,
+        "model_license_status": args.license_status,
+        "cache_root": str(args.cache_root) if args.cache_root else None,
         "scanned": audit.get("scanned"),
         "matched": audit.get("matched"),
         "high_confidence": audit.get("high_confidence"),

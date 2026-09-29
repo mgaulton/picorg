@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +42,12 @@ def iter_files(root: Path, errors: list[dict[str, str]] | None = None):
                 errors.append({"path": str(path), "error": f"{type(exc).__name__}: {exc}"})
 
 
-def build_report(priority_roots: list[Path], target_roots: list[Path], cache_path: Path | None = None) -> dict[str, Any]:
+def build_report(
+    priority_roots: list[Path],
+    target_roots: list[Path],
+    cache_path: Path | None = None,
+    progress_seconds: float = 15.0,
+) -> dict[str, Any]:
     cache: dict[str, dict[str, Any]] = {}
     if cache_path and cache_path.is_file():
         try:
@@ -66,9 +72,26 @@ def build_report(priority_roots: list[Path], target_roots: list[Path], cache_pat
     duplicates: list[dict[str, str]] = []
     skipped_errors: list[dict[str, str]] = []
     scanned = 0
+    started = time.monotonic()
+    last_progress = started
+
+    def report_progress(stage: str) -> None:
+        nonlocal last_progress
+        now = time.monotonic()
+        if scanned and now - last_progress >= max(1.0, progress_seconds):
+            elapsed = max(0.1, now - started)
+            print(
+                f"dedupe progress: stage={stage} scanned={scanned} "
+                f"duplicates={len(duplicates)} elapsed={elapsed:.0f}s "
+                f"rate={scanned / elapsed:.1f}/s",
+                flush=True,
+            )
+            last_progress = now
+
     for root in priority_roots:
         for path in iter_files(root, skipped_errors):
             scanned += 1
+            report_progress("priority")
             key = cached_digest(path, skipped_errors)
             if not key:
                 continue
@@ -76,6 +99,7 @@ def build_report(priority_roots: list[Path], target_roots: list[Path], cache_pat
     for root in target_roots:
         for path in iter_files(root, skipped_errors):
             scanned += 1
+            report_progress("target")
             key = cached_digest(path, skipped_errors)
             if not key:
                 continue
@@ -128,11 +152,12 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path(".cache/picorg/priority-dedupe.json"))
     parser.add_argument("--quarantine-root", type=Path, default=Path(".cache/picorg/priority-dedupe-quarantine"))
     parser.add_argument("--cache", type=Path, default=Path(".cache/picorg/priority-dedupe-hashes.json"))
+    parser.add_argument("--progress-seconds", type=float, default=15.0, help="emit progress at least this often")
     parser.add_argument("--apply", action="store_true", help="move target duplicates to quarantine; never modify priority roots")
     args = parser.parse_args()
-    priority_roots = args.priority_root or [Path("/mnt/elements16a/Pron/redditdaily"), Path("/mnt/elements16a/Pron/metadaily")]
+    priority_roots = args.priority_root or [Path("/mnt/elements16a/Pron/redditdaily/downloads"), Path("/mnt/elements16a/Pron/metadaily/downloads")]
     target_roots = args.target_root or [Path("/mnt/elements16/@mixedpics"), Path("/mnt/desktop/Pictures")]
-    report = build_report(priority_roots, target_roots, args.cache)
+    report = build_report(priority_roots, target_roots, args.cache, args.progress_seconds)
     if args.apply:
         quarantine(report, args.quarantine_root)
     args.output.parent.mkdir(parents=True, exist_ok=True)

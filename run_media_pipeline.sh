@@ -13,10 +13,11 @@ Usage: run_media_pipeline.sh [--ingest] [--apply] [--skip-photo]
 
 Stages:
   --ingest       Run /opt/move_downloads_remote.sh (moves incoming files).
-  --apply        Apply picorg moves after its dry-run.
+  --apply        Run the fingerprinted precision-gated name organization.
   --skip-photo   Skip the photo_reorg dry-run stage.
 
-Without --ingest or --apply, all stages are non-mutating dry runs.
+Without --apply, all stages are non-mutating dry runs.  The apply path is
+delegated to run_name_org.sh and never bypasses its safety gate.
 EOF
 }
 
@@ -31,20 +32,25 @@ while (($#)); do
   shift
 done
 
-if ((RUN_INGEST)); then
-  echo "[pipeline] ingest: /opt/move_downloads_remote.sh"
-  /opt/move_downloads_remote.sh
-else
-  echo "[pipeline] ingest: skipped (use --ingest)"
-fi
-
-echo "[pipeline] picorg: dry-run"
-"$ROOT_DIR/picorg_manual.sh" dry-run
-
 if ((RUN_PICORG_APPLY)); then
-  echo "[pipeline] picorg: apply"
-  "$ROOT_DIR/picorg_manual.sh" apply
+  # The legacy script used to call picorg_manual.sh apply directly, bypassing
+  # the fingerprint and precision safety gate in run_name_org.sh.  Delegate
+  # the complete name stage to the gated entry point instead.
+  echo "[pipeline] picorg: gated name organization"
+  if ((RUN_INGEST)); then
+    "$ROOT_DIR/run_name_org.sh" --ingest
+  else
+    "$ROOT_DIR/run_name_org.sh"
+  fi
 else
+  if ((RUN_INGEST)); then
+    echo "[pipeline] ingest: /opt/move_downloads_remote.sh"
+    /opt/move_downloads_remote.sh
+  else
+    echo "[pipeline] ingest: skipped (use --ingest)"
+  fi
+  echo "[pipeline] picorg: dry-run"
+  "$ROOT_DIR/picorg_manual.sh" dry-run
   echo "[pipeline] picorg: apply skipped (use --apply)"
 fi
 

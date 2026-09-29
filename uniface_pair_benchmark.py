@@ -8,17 +8,26 @@ change the organizer's production embedding cache.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import cv2
 import numpy as np
+from face_match_benchmark import wilson_interval
 
 
 def _normalise(vector: np.ndarray) -> np.ndarray:
     vector = np.asarray(vector, dtype=np.float32)
     return vector / max(float(np.linalg.norm(vector)), 1e-12)
+
+
+def _single_face(faces):
+    """Return a face only when detection is unambiguous."""
+    return faces[0] if len(faces) == 1 else None
 
 
 def _extractor(backend: str):
@@ -29,9 +38,11 @@ def _extractor(backend: str):
 
         def extract(image: np.ndarray) -> np.ndarray | None:
             faces = analyzer.analyze(image)
-            if not faces:
+            # Pair benchmarks must use the same safety policy as production:
+            # never choose an arbitrary face from a group photo.
+            face = _single_face(faces)
+            if face is None:
                 return None
-            face = max(faces, key=lambda item: float(item.confidence))
             return _normalise(face.embedding)
 
         return extract
@@ -43,26 +54,68 @@ def _extractor(backend: str):
     recognizer = AdaFace()
 
     def extract(image: np.ndarray) -> np.ndarray | None:
-        faces = detector.detect(image, max_num=1)
-        if not faces:
+        faces = detector.detect(image)
+        face = _single_face(faces)
+        if face is None:
             return None
-        return _normalise(recognizer.get_normalized_embedding(image, faces[0].landmarks))
+        return _normalise(recognizer.get_normalized_embedding(image, face.landmarks))
 
     return extract
 
 
-def run(pairs_path: Path, backend: str, thresholds: list[float]) -> dict:
-    pairs = json.loads(pairs_path.read_text(encoding="utf-8"))
+def _build_name_index(roots: list[Path]) -> dict[str, list[Path]]:
+    index: dict[str, list[Path]] = defaultdict(list)
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            for path in root.rglob("*"):
+                try:
+                    if path.is_file():
+                        index[path.name].append(path)
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return dict(index)
+
+
+def run(
+    pairs_path: Path,
+    backend: str,
+    thresholds: list[float],
+    license_status: str = "unverified",
+    search_roots: list[Path] | None = None,
+) -> dict:
+    pairs_raw = pairs_path.read_bytes()
+    pairs = json.loads(pairs_raw)
     paths = sorted({path for pair in pairs for path in (pair["path_a"], pair["path_b"])})
     extract = _extractor(backend)
     embeddings: dict[str, np.ndarray] = {}
     status_counts: dict[str, int] = {}
+    name_index = _build_name_index(search_roots or [])
+    relinked = 0
+    ambiguous = 0
     started = time.monotonic()
     for raw_path in paths:
         try:
-            image = cv2.imread(raw_path)
+            source = Path(raw_path)
+            if not source.is_file():
+                candidates = name_index.get(source.name, [])
+                if len(candidates) == 1:
+                    source = candidates[0]
+                    relinked += 1
+                elif len(candidates) > 1:
+                    status_counts["ambiguous"] = status_counts.get("ambiguous", 0) + 1
+                    ambiguous += 1
+                    continue
+                else:
+                    status_counts["missing"] = status_counts.get("missing", 0) + 1
+                    continue
+            image = cv2.imread(str(source))
             if image is None:
-                raise ValueError("image_unreadable")
+                status_counts["image_unreadable"] = status_counts.get("image_unreadable", 0) + 1
+                continue
             vector = extract(image)
             if vector is None:
                 status_counts["no_face"] = status_counts.get("no_face", 0) + 1
@@ -88,6 +141,12 @@ def run(pairs_path: Path, backend: str, thresholds: list[float]) -> dict:
             "tpr": round(true_positive_rate, 6),
             "fnmr": round(1.0 - true_positive_rate, 6),
             "fmr": round(false_match_rate, 6),
+            "fnmr_ci95": wilson_interval(
+                sum(score < threshold for score in genuine), len(genuine)
+            ),
+            "fmr_ci95": wilson_interval(
+                sum(score >= threshold for score in impostor), len(impostor)
+            ),
         })
     ranges = {}
     for label, values in (("genuine", genuine), ("impostor", impostor)):
@@ -95,10 +154,16 @@ def run(pairs_path: Path, backend: str, thresholds: list[float]) -> dict:
             ranges[label] = {"min": round(min(values), 6), "max": round(max(values), 6)}
     return {
         "backend": backend,
+        "model_id": f"uniface-{backend}",
+        "model_license_status": license_status,
+        "pairs_sha256": hashlib.sha256(pairs_raw).hexdigest(),
         "pairs": len(pairs),
         "input_images": len(paths),
         "embedded_images": len(embeddings),
         "scored_pairs": len(scores),
+        "coverage": round(len(scores) / len(pairs), 6) if pairs else 0.0,
+        "relinked_images": relinked,
+        "ambiguous_images": ambiguous,
         "genuine_pairs": len(genuine),
         "impostor_pairs": len(impostor),
         "status_counts": status_counts,
@@ -115,15 +180,21 @@ def main() -> int:
     parser.add_argument("--backend", choices=("arcface", "adaface"), default="arcface")
     parser.add_argument("--threshold", type=float, action="append", dest="thresholds")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--search-root", type=Path, action="append", default=[], help="optional root(s) for unique-basename relinking of moved files")
+    parser.add_argument("--model-license-status", default="unverified", choices=("unverified", "research-only", "approved"))
     args = parser.parse_args()
     thresholds = args.thresholds or [0.30, 0.40, 0.45, 0.50, 0.55, 0.60]
     if any(not -1.0 <= threshold <= 1.0 for threshold in thresholds):
         parser.error("--threshold must be between -1 and 1")
-    report = run(args.pairs, args.backend, thresholds)
+    report = run(args.pairs, args.backend, thresholds, args.model_license_status, args.search_root)
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")
     print(rendered, end="")
+    if not report["genuine_pairs"] or not report["impostor_pairs"]:
+        print("benchmark invalid: requires at least one scored genuine and impostor pair", file=sys.stderr)
+        return 2
     return 0
 
 
