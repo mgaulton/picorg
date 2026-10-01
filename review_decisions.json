@@ -278,11 +278,11 @@
         "/mnt/elements16/@mixedpics/89af192rj46f1.jpeg",
         "/mnt/elements16/@mixedpics/9czlg2l17y4f1.jpeg",
         "/mnt/elements16/@mixedpics/Be Mine.jpeg",
-        "/mnt/elements16/@mixedpics/Front or back \ufe0f (1).jpg",
-        "/mnt/elements16/@mixedpics/Front or back \ufe0f.jpg",
+        "/mnt/elements16/@mixedpics/Front or back ️ (1).jpg",
+        "/mnt/elements16/@mixedpics/Front or back ️.jpg",
         "/mnt/elements16/@mixedpics/Happy Easter!  Eat lots of chocolate!.jpeg",
-        "/mnt/elements16/@mixedpics/Happy Hump Day! \ufe0f (1).jpg",
-        "/mnt/elements16/@mixedpics/Happy Hump Day! \ufe0f.jpg",
+        "/mnt/elements16/@mixedpics/Happy Hump Day! ️ (1).jpg",
+        "/mnt/elements16/@mixedpics/Happy Hump Day! ️.jpg",
         "/mnt/elements16/@mixedpics/Happy Hump Day!.jpeg"
       ],
       "saved_at": "2026-08-24T20:06:46.978243+00:00",
@@ -474,7 +474,7 @@
         "/mnt/elements16/@mixedpics/Feeling pretty with all these freckles.jpeg",
         "/mnt/elements16/@mixedpics/Hi, guys.jpeg",
         "/mnt/elements16/@mixedpics/Hiyaaa.jpeg",
-        "/mnt/elements16/@mixedpics/Holy shit guys!! I got locked out of this account almost 3 years ago and finally got back in today I missed you guys! \ufe0f.jpeg",
+        "/mnt/elements16/@mixedpics/Holy shit guys!! I got locked out of this account almost 3 years ago and finally got back in today I missed you guys! ️.jpeg",
         "/mnt/elements16/@mixedpics/I hope my face can put a smile on yours!.jpeg"
       ],
       "saved_at": "2026-08-26T21:31:22.716909+00:00",
@@ -511,7 +511,7 @@
       "family": "review",
       "identity": "brett_cooper",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -531,7 +531,9 @@
         "/mnt/elements16/@mixedpics/More of the sexy Brett I promised (9).png"
       ],
       "saved_at": "2026-08-29T22:00:14.959684+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -540,7 +542,7 @@
       "family": "review",
       "identity": "LaceyBloom",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -560,7 +562,9 @@
         "/mnt/elements16/@mixedpics/Happy 4th of July! (1).jpg"
       ],
       "saved_at": "2026-08-29T22:02:49.460305+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -569,7 +573,7 @@
       "family": "review",
       "identity": "Underthescrubs",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -589,7 +593,9 @@
         "/mnt/elements16/@mixedpics/RDT_20250419_2040017613488926389796977.jpg"
       ],
       "saved_at": "2026-08-29T22:03:17.708834+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -598,7 +604,7 @@
       "family": "review",
       "identity": "dovecameron",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -618,7 +624,9 @@
         "/mnt/elements16/@mixedpics/8yu1ydkl9iof1.jpg"
       ],
       "saved_at": "2026-08-29T22:04:29.028339+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -627,7 +635,7 @@
       "family": "review",
       "identity": "katdennings",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -647,7 +655,9 @@
         "/mnt/elements16/@mixedpics/7ygt0xruhw6e1.jpg"
       ],
       "saved_at": "2026-08-29T22:05:30.813109+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -656,7 +666,7 @@
       "family": "review",
       "identity": "brookemonke_xo",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -676,7 +686,9 @@
         "/mnt/elements16/@mixedpics/Red always looks so good on her (3).jpg"
       ],
       "saved_at": "2026-08-29T22:06:28.584127+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -685,7 +697,7 @@
       "family": "review",
       "identity": "sashagrey",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -705,7 +717,9 @@
         "/mnt/elements16/@mixedpics/Magnificent Sasha....jpeg"
       ],
       "saved_at": "2026-08-29T22:07:24.375552+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -714,7 +728,7 @@
       "family": "review",
       "identity": "bailey_spinn",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "no_expected_identity",
         "no_face_labels"
@@ -734,7 +748,9 @@
         "/mnt/elements16/@mixedpics/RDT_20250120_2350367692594942528488177.jpg"
       ],
       "saved_at": "2026-08-29T22:08:09.698892+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -743,7 +759,7 @@
       "family": "review",
       "identity": "GiannaTheMichaels",
       "notes": "Approved from cluster card after identity confirmation",
-      "purity_ack": true,
+      "purity_ack": false,
       "purity_flags": [
         "large_cluster",
         "no_expected_identity",
@@ -764,7 +780,9 @@
         "/mnt/elements16/@mixedpics/206743789_955740591925281_3538214736041584773_n.jpg"
       ],
       "saved_at": "2026-08-29T22:13:02.057723+00:00",
-      "status": "confirmed"
+      "status": "pending",
+      "reset_at": "2026-10-01T05:13:47.253398+00:00",
+      "reset_reason": "Bulk confirmation reset: prior batch was confirmed inaccurate."
     },
     {
       "aliases": [],
@@ -849,8 +867,64 @@
       ],
       "saved_at": "2026-09-28T18:23:09.272167+00:00",
       "status": "pending"
+    },
+    {
+      "aliases": [],
+      "cluster_id": "18f0d28087cb2e5a",
+      "count": 23,
+      "family": "linked",
+      "identity": "jia_lissa",
+      "notes": "",
+      "purity_ack": false,
+      "purity_flags": [
+        "no_expected_identity"
+      ],
+      "sample_paths": [
+        "/mnt/elements16/@mixedpics/024xwdyqg4bf1.jpg",
+        "/mnt/elements16/@mixedpics/0g33of79gqmf1.jpg",
+        "/mnt/elements16/@mixedpics/10fe2p68655f1.jpeg",
+        "/mnt/elements16/@mixedpics/3st4fnxqi0jf1.jpeg",
+        "/mnt/elements16/@mixedpics/4wn5i1w9ks5f1.jpg",
+        "/mnt/elements16/@mixedpics/5w8zntdt28fe1.jpg",
+        "/mnt/elements16/@mixedpics/78ndordt28fe1.jpg",
+        "/mnt/elements16/@mixedpics/8bal7v3g8sjf1.jpeg",
+        "/mnt/elements16/@mixedpics/9v4e3nhrg4bf1.jpg",
+        "/mnt/elements16/@mixedpics/Amazing Jia..jpeg",
+        "/mnt/elements16/@mixedpics/Goddess_20250112_141035_lUDsco.jpg",
+        "/mnt/elements16/@mixedpics/Jia  Always a tease.jpeg"
+      ],
+      "saved_at": "2026-09-30T19:56:41.306014+00:00",
+      "status": "pending"
+    },
+    {
+      "aliases": [],
+      "cluster_id": "aef4391b5a667eb0",
+      "count": 23,
+      "family": "linked",
+      "identity": "sasha_grey",
+      "notes": "",
+      "purity_ack": false,
+      "purity_flags": [
+        "no_expected_identity"
+      ],
+      "sample_paths": [
+        "/mnt/elements16/@mixedpics/1bwplgcaxdkf1.jpeg",
+        "/mnt/elements16/@mixedpics/435fqi73fcme1.jpg",
+        "/mnt/elements16/@mixedpics/5nqnghyg9plf1.jpeg",
+        "/mnt/elements16/@mixedpics/7xz5tbxwg3je1.jpeg",
+        "/mnt/elements16/@mixedpics/84bywua5u0of1.jpg",
+        "/mnt/elements16/@mixedpics/864in0j2ucwe1.jpg",
+        "/mnt/elements16/@mixedpics/9i9j3letvcif1.jpg",
+        "/mnt/elements16/@mixedpics/Flawless beauty.jpeg",
+        "/mnt/elements16/@mixedpics/Hard to believe this is the same woman (1).jpg",
+        "/mnt/elements16/@mixedpics/Hard to believe this is the same woman.jpg",
+        "/mnt/elements16/@mixedpics/I'm a bit tied up at the moment.jpeg",
+        "/mnt/elements16/@mixedpics/Legendary goddess.jpeg"
+      ],
+      "saved_at": "2026-09-30T19:57:07.408043+00:00",
+      "status": "pending"
     }
   ],
   "schema_version": 1,
-  "updated": "2026-09-28T18:23:09.272255+00:00"
+  "updated": "2026-10-01T05:13:47.253398+00:00"
 }
