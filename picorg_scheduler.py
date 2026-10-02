@@ -3,8 +3,8 @@
 
 The scheduler is deliberately small: it orchestrates existing PicOrg scripts,
 keeps a JSON status record for the LAN UI, and never accepts arbitrary shell
-commands from the web layer.  Scheduled cycles are disabled by default and
-high-confidence moves remain opt-in.
+commands from the web layer. Scheduled cycles are disabled by default. Full
+face runs apply only the precision-gated name matches before face processing.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # protected reference roots.
     "rebuild_faces": False,
     "migrate_confirmed": True,
-    "apply_high_confidence": False,
+    "apply_high_confidence": True,
 }
 
 

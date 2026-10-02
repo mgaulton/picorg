@@ -64,17 +64,16 @@ def reconcile_clusters(name_audit: Dict[str, Any], face_audit: Dict[str, Any]) -
         for path in cluster["paths"]:
             names_for_path.setdefault(path, []).append(cluster)
 
-    output: List[Dict[str, Any]] = []
-    # Emit one review cluster per face cluster. Name evidence is collected as
-    # context for those paths and is never allowed to merge face clusters.
+    grouped: Dict[str, Dict[str, Any]] = {}
+    # Face clusters are the primary grouping signal. When separate face
+    # clusters independently resolve to the same single canonical identity,
+    # join them so one likely person is reviewed as one cluster. Raw filename
+    # and folder titles remain context only; they cannot join face clusters.
     for face_cluster in face_clusters:
         component_paths = sorted({str(path) for path in face_cluster["paths"] if path})
         if not component_paths:
             continue
         face_id = str(face_cluster["cluster_id"])
-        # Keep the historical path-derived id stable so existing review
-        # decisions continue to apply after the membership split.
-        digest = hashlib.sha256("|".join(component_paths).encode("utf-8")).hexdigest()[:16]
         related_names = [name for path in component_paths for name in names_for_path.get(path, [])]
         name_titles = sorted({str(name["title"]) for name in related_names})
         name_identities = sorted({
@@ -83,18 +82,63 @@ def reconcile_clusters(name_audit: Dict[str, Any], face_audit: Dict[str, Any]) -
             for identity in name.get("expected_identities", [])
             if identity and sorter.normalize_key(str(identity)) in registry_aliases
         })
-        face_ids = [face_id]
+        face_identities = sorted({
+            registry_aliases[sorter.normalize_key(str(identity))]
+            for identity in face_cluster.get("expected_identities", [])
+            if identity and sorter.normalize_key(str(identity)) in registry_aliases
+        })
+        resolved_identities = (
+            face_identities if len(face_identities) == 1
+            else name_identities if not face_identities and len(name_identities) == 1
+            else sorted(set(name_identities) | set(face_identities))
+        )
         face_labels = sorted({str(label) for label in face_cluster.get("face_cluster_labels", []) if label})
-        method = "name+face" if name_titles else "face-only"
+        group_key = (
+            f"identity:{face_identities[0]}"
+            if len(face_identities) == 1
+            else f"face:{face_id}"
+        )
+        group = grouped.setdefault(group_key, {
+            "paths": set(),
+            "name_titles": set(),
+            "name_identities": set(),
+            "face_identities": set(),
+            "resolved_identities": set(),
+            "face_clusters": set(),
+            "face_labels": set(),
+        })
+        group["paths"].update(component_paths)
+        group["name_titles"].update(name_titles)
+        group["name_identities"].update(name_identities)
+        group["face_identities"].update(face_identities)
+        group["resolved_identities"].update(resolved_identities)
+        group["face_clusters"].add(face_id)
+        group["face_labels"].update(face_labels)
+
+    output: List[Dict[str, Any]] = []
+    for group in grouped.values():
+        component_paths = sorted(group["paths"])
+        name_titles = sorted(group["name_titles"])
+        name_identities = sorted(group["name_identities"])
+        face_identities = sorted(group["face_identities"])
+        resolved_identities = sorted(group["resolved_identities"])
+        face_ids = sorted(group["face_clusters"])
+        face_labels = sorted(group["face_labels"])
+        # Filename/folder titles are weak context. Registry-resolved names
+        # from face matching may label a group but cannot override conflicts.
+        digest = hashlib.sha256("|".join(component_paths).encode("utf-8")).hexdigest()[:16]
+        method = (
+            "face-identity" if len(face_identities) == 1 and len(resolved_identities) == 1
+            else "name+face" if len(resolved_identities) == 1
+            else "face-only"
+        )
         # Only expose an fbunknown label for a small, single-face group. Large
         # groups remain reviewable but are not identity evidence.
         face_label_eligible = len(component_paths) < 100 and len(face_labels) == 1
-        if len(name_identities) == 1:
-            title = name_identities[0]
+        if len(resolved_identities) == 1:
+            title = resolved_identities[0]
         elif face_label_eligible:
             title = face_labels[0]
-            if name_titles:
-                title += f" · name: {name_titles[0]}"
         else:
             title = f"facegroup-{digest[:8]}"
         output.append({
@@ -104,6 +148,8 @@ def reconcile_clusters(name_audit: Dict[str, Any], face_audit: Dict[str, Any]) -
             "count": len(component_paths),
             "name_titles": name_titles,
             "name_identities": name_identities,
+            "face_identities": face_identities,
+            "resolved_identities": resolved_identities,
             "face_clusters": face_ids,
             "face_labels": face_labels,
             "face_label_eligible": face_label_eligible,
@@ -153,7 +199,7 @@ def main() -> int:
                 "face_cluster_ids": cluster["face_clusters"],
                 "cluster_label": cluster["face_labels"][0] if cluster["face_label_eligible"] else None,
                 "face_cluster_id": cluster["face_clusters"][0] if cluster["face_clusters"] else None,
-                "expected_identity": cluster["name_identities"][0] if len(cluster["name_identities"]) == 1 else None,
+                "expected_identity": cluster["resolved_identities"][0] if len(cluster["resolved_identities"]) == 1 else None,
                 "reconciliation": {"method": cluster["method"], "name_titles": cluster["name_titles"], "face_clusters": cluster["face_clusters"]},
             })
     _atomic_write(

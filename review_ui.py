@@ -16,6 +16,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import signal
 import shutil
 import shlex
@@ -56,8 +57,8 @@ DEFAULT_PENDING_ASSIGNMENTS = Path("/opt/picorg/.cache/picorg/pending-review-ass
 DEFAULT_EVIDENCE_DB = Path(os.environ.get("PICORG_EVIDENCE_DB", "/opt/picorg/.cache/picorg/identity_evidence.sqlite3"))
 DEFAULT_EVIDENCE_HEALTH = Path(os.environ.get("PICORG_EVIDENCE_HEALTH", "/opt/picorg/.cache/picorg/evidence-health.json"))
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".mp4", ".mov"}
-FAMILIES = {"manual", "metadaily", "redditdaily", "reddit_follow", "reddit_subreddit", "pscrape", "review"}
-BASELINE_IDENTITY_FAMILIES = {"manual", "metadaily", "redditdaily", "reddit_follow", "review"}
+FAMILIES = {"linked", "manual", "metadaily", "redditdaily", "reddit_follow", "reddit_subreddit", "pscrape", "review"}
+BASELINE_IDENTITY_FAMILIES = {"linked", "manual", "metadaily", "redditdaily", "reddit_follow", "review"}
 DECISION_STATUSES = {"pending", "confirmed", "rejected", "needs-evidence"}
 DEFAULT_REGISTRY = Path("/opt/picorg/project_registry.json")
 # LAN exposure is an explicit deployment requirement; override HOST for local-only use.
@@ -71,10 +72,25 @@ DEFAULT_REPAIR_LEDGER = Path(os.environ.get("PICORG_REPAIR_LEDGER", "/opt/picorg
 DEFAULT_REBUILD_LOG = Path(os.environ.get("PICORG_FACE_RECOVERY_LOG", "/tmp/picorg-face-rebuild-recovery.log"))
 DEFAULT_SCHEDULER_CONFIG = Path(os.environ.get("PICORG_SCHEDULER_CONFIG", str(scheduler.DEFAULT_CONFIG_PATH)))
 DEFAULT_SCHEDULER_STATUS = Path(os.environ.get("PICORG_SCHEDULER_STATUS", str(scheduler.DEFAULT_STATUS_PATH)))
+DEFAULT_IDENTITY_PICKER_SETTINGS = Path(os.environ.get(
+    "PICORG_IDENTITY_PICKER_SETTINGS", "/opt/picorg/.cache/picorg/identity-picker-settings.json"
+))
+DEFAULT_RECENT_CHOICES = Path(os.environ.get(
+    "PICORG_RECENT_CHOICES", "/opt/picorg/.cache/picorg/recent-choices.json"
+))
+DEFAULT_IDENTITY_RECONCILIATION_DECISIONS = Path(os.environ.get(
+    "PICORG_IDENTITY_RECONCILIATION_DECISIONS",
+    "/opt/picorg/.cache/picorg/identity-reconciliation-review.json",
+))
+DEFAULT_IDENTITY_PICKER_PREFIXES = ("fbhottie", "redhottie", "reddcutie", "frecklehottie", "gothbaddie", "twins")
 DEFAULT_ASSORTED_ROOT = Path(os.environ.get("PICORG_ASSORTED_ROOT", "/mnt/assorted"))
 DEFAULT_ASSORTED_ASSOCIATIONS = Path(
     os.environ.get("PICORG_ASSORTED_ASSOCIATIONS", "/opt/picorg/.cache/picorg/assorted-folder-associations.json")
 )
+DEFAULT_MANUAL_GROUPS = Path(os.environ.get("PICORG_MANUAL_GROUPS", "/opt/picorg/manual_groups.json"))
+DEFAULT_MANUAL_GROUP_ACTIONS = Path(os.environ.get(
+    "PICORG_MANUAL_GROUP_ACTIONS", "/opt/picorg/.cache/picorg/manual-group-actions.json"
+))
 SCHEDULER_SCRIPT = Path(__file__).with_name("picorg_scheduler.py")
 DEFAULT_TRUSTED_CIDRS = (
     "192.168.2.0/24,"
@@ -397,14 +413,20 @@ def load_audit(path: Path) -> Dict[str, Any]:
     return payload
 
 
-def _cluster_key(result: Dict[str, Any]) -> str:
-    # Face assignments are authoritative for review membership. Several
-    # independent face clusters may share a provisional label (for example
-    # ``fbunknown001``); grouping by title would silently create mixed groups.
+def _cluster_key(result: Dict[str, Any], scan_roots: set[Path]) -> str:
+    # Face matches stay authoritative; named folders only organize records
+    # that do not have a face-cluster assignment.
     face_cluster_id = str(result.get("face_cluster_id") or "").strip()
     if face_cluster_id:
         return f"face:{face_cluster_id}"
-    title = str(result.get("title") or Path(str(result.get("path") or "")).stem)
+    path = str(result.get("path") or "").strip()
+    folder = Path(path).parent if path else None
+    containing_roots = [root for root in scan_roots if folder and (folder == root or root in folder.parents)]
+    scan_root = max(containing_roots, key=lambda item: len(item.parts), default=None)
+    if folder and folder.name and scan_root and folder != scan_root:
+        return f"folder:{folder.as_posix()}"
+    # Root-level intake files retain the previous title grouping.
+    title = str(result.get("title") or Path(path).stem)
     base = sorter.gallery_base_title(title)
     return sorter.normalize_key(base) or sorter.normalize_key(title) or "unlabeled"
 
@@ -431,22 +453,39 @@ def _cluster_purity_flags(cluster: Dict[str, Any]) -> List[str]:
     return flags
 
 
+def _cluster_quality_rank(cluster: Dict[str, Any]) -> int:
+    flags = set(_cluster_purity_flags(cluster))
+    if flags.intersection({"multiple_face_clusters", "multiple_source_families", "no_face_labels"}):
+        return 0
+    if flags.intersection({"large_cluster", "no_expected_identity"}):
+        return 1
+    return 2
+
+
 def build_clusters(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     grouped: Dict[str, List[Dict[str, Any]]] = {}
+    roots = {
+        Path(str(result.get("source_root")))
+        for result in payload["results"]
+        if isinstance(result, dict) and result.get("source_root")
+    }
+    scan_roots = {
+        root for root in roots
+        if not any(other != root and other in root.parents for other in roots)
+    }
     for result in payload["results"]:
         if not isinstance(result, dict) or result.get("canonical"):
             continue
         path = str(result.get("path") or "")
         if not path:
             continue
-        grouped.setdefault(_cluster_key(result), []).append(result)
+        grouped.setdefault(_cluster_key(result, scan_roots), []).append(result)
 
     clusters: List[Dict[str, Any]] = []
     for key, results in grouped.items():
         paths = [str(item["path"]) for item in results]
-        title = str(results[0].get("title") or Path(paths[0]).stem)
-        clusters.append(
-            {
+        title = Path(key[len("folder:"):]).name if key.startswith("folder:") else str(results[0].get("title") or Path(paths[0]).stem)
+        cluster = {
                 "cluster_id": _cluster_id(key, paths),
                 "key": key,
                 "title": title,
@@ -461,12 +500,19 @@ def build_clusters(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "face_cluster_labels": sorted(
                     {str(item["cluster_label"]) for item in results if item.get("cluster_label")}
                 ),
+                "face_link_scores": {
+                    str(item["path"]): float(item["face_link_similarity"])
+                    for item in results
+                    if item.get("face_link_similarity") is not None
+                },
                 "review_methods": sorted(
                     {str(item["review_method"]) for item in results if item.get("review_method")}
                 ),
             }
-        )
-    return sorted(clusters, key=lambda item: (-item["count"], item["title"].casefold()))
+        cluster["quality_rank"] = _cluster_quality_rank(cluster)
+        cluster["quality_label"] = {2: "Strong", 1: "Review", 0: "Mixed evidence"}[cluster["quality_rank"]]
+        clusters.append(cluster)
+    return sorted(clusters, key=lambda item: (-item["count"], -item["quality_rank"], item["title"].casefold()))
 
 
 def _atomic_json_write(path: Path, payload: Dict[str, Any]) -> None:
@@ -514,14 +560,14 @@ def load_cluster_index(audit_path: Path, cache_path: Optional[Path] = None) -> L
     stamp = audit_path.stat()
     try:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if cached.get("audit") == {"mtime_ns": stamp.st_mtime_ns, "size": stamp.st_size}:
+        if cached.get("schema_version") == 4 and cached.get("audit") == {"mtime_ns": stamp.st_mtime_ns, "size": stamp.st_size}:
             clusters = cached.get("clusters")
             if isinstance(clusters, list) and all(isinstance(item, dict) and "paths" in item for item in clusters):
                 return clusters
     except (OSError, json.JSONDecodeError):
         pass
     clusters = build_clusters(load_audit(audit_path))
-    _atomic_json_write(cache_path, {"schema_version": 1, "audit": {"mtime_ns": stamp.st_mtime_ns, "size": stamp.st_size}, "clusters": clusters})
+    _atomic_json_write(cache_path, {"schema_version": 4, "audit": {"mtime_ns": stamp.st_mtime_ns, "size": stamp.st_size}, "clusters": clusters})
     return clusters
 
 
@@ -700,7 +746,20 @@ def _aggregate_identity_options(rows: List[Dict[str, Any]]) -> List[Dict[str, An
             for name in [*(item.get("aliases") or []), item.get("canonical") or ""]
             if str(name) and str(name) != canonical
         }
-        result.append({"canonical": chosen.get("canonical"), "family": chosen.get("family"), "aliases": sorted(aliases_out, key=str.casefold), "source": "canonical"})
+        source_aliases: Dict[str, set[str]] = {}
+        provenance: set[str] = set()
+        for item in members:
+            for source, names in (item.get("source_aliases") or {}).items():
+                source_aliases.setdefault(str(source), set()).update(str(name) for name in names if str(name))
+            provenance.update(str(value) for value in item.get("provenance", []) if str(value))
+        result.append({
+            "canonical": chosen.get("canonical"),
+            "family": chosen.get("family"),
+            "aliases": sorted(aliases_out, key=str.casefold),
+            "source_aliases": {source: sorted(names, key=str.casefold) for source, names in sorted(source_aliases.items())},
+            "provenance": sorted(provenance),
+            "source": "canonical",
+        })
     return sorted(result, key=lambda item: (str(item.get("family") or "").casefold(), str(item.get("canonical") or "").casefold()))
 
 
@@ -896,6 +955,43 @@ def _valid_identity(canonical: str) -> bool:
     return bool(canonical and len(canonical) <= 120 and not any(char in canonical for char in "\\/\r\n\x00") and canonical not in {".", ".."})
 
 
+def _read_manual_groups(path: Path) -> Dict[str, Dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    raw_groups = payload.get("groups", []) if isinstance(payload, dict) else []
+    groups: Dict[str, Dict[str, Any]] = {}
+    for item in raw_groups if isinstance(raw_groups, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        key = sorter.normalize_key(name)
+        paths = item.get("paths") or []
+        if _valid_identity(name) and key and isinstance(paths, list):
+            groups[key] = {
+                "name": name,
+                "paths": sorted({str(value) for value in paths if isinstance(value, str) and value}),
+                "created_at": str(item.get("created_at") or ""),
+                "updated_at": str(item.get("updated_at") or ""),
+            }
+    return groups
+
+
+def _read_manual_group_actions(path: Path) -> List[Dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    actions = payload.get("actions", []) if isinstance(payload, dict) else []
+    return [action for action in actions if isinstance(action, dict)] if isinstance(actions, list) else []
+
+
+def _write_manual_group_actions(path: Path, actions: List[Dict[str, Any]]) -> None:
+    updated_at = datetime.now(timezone.utc).isoformat()
+    _atomic_json_write(path, {"schema_version": 1, "updated_at": updated_at, "actions": actions[-1000:]})
+
+
 ASSORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 
 
@@ -1089,11 +1185,149 @@ def add_project_registry_identity(
 
 
 def _public_cluster(cluster: Dict[str, Any], decision: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    result = {key: value for key, value in cluster.items() if key != "paths"}
+    result = {key: value for key, value in cluster.items() if key not in {"paths", "face_link_scores"}}
     result["decision"] = decision
     result["purity_flags"] = _cluster_purity_flags(cluster)
     result["requires_image_review"] = bool(result["purity_flags"])
     return result
+
+
+def _normalize_identity_picker_prefixes(values: Any) -> List[str]:
+    if not isinstance(values, list) or len(values) > 50:
+        raise ValueError("prefixes must be a list with at most 50 values")
+    prefixes: List[str] = []
+    for raw in values:
+        if not isinstance(raw, str):
+            raise ValueError("each picker prefix must be text")
+        value = raw.strip().casefold()
+        if not value:
+            continue
+        if len(value) > 64 or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", value):
+            raise ValueError("prefixes may contain only letters, numbers, underscores, and hyphens")
+        if value not in prefixes:
+            prefixes.append(value)
+    if not prefixes:
+        raise ValueError("add at least one identity prefix")
+    return prefixes
+
+
+def _read_identity_picker_prefixes(path: Path) -> List[str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return _normalize_identity_picker_prefixes(payload.get("prefixes"))
+    except (OSError, json.JSONDecodeError, AttributeError, ValueError):
+        return list(DEFAULT_IDENTITY_PICKER_PREFIXES)
+
+
+def _read_recent_choices(path: Path) -> Dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    identities: List[Dict[str, str]] = []
+    seen_identities: set[str] = set()
+    raw_identities = payload.get("identities", [])
+    for item in raw_identities if isinstance(raw_identities, list) else []:
+        if not isinstance(item, dict):
+            continue
+        canonical = str(item.get("canonical") or "").strip()[:256]
+        key = canonical.casefold()
+        if not key or key in seen_identities:
+            continue
+        seen_identities.add(key)
+        family = str(item.get("family") or "review")
+        identities.append({"canonical": canonical, "family": family if family in FAMILIES else "review"})
+        if len(identities) == 20:
+            break
+    groups: List[str] = []
+    seen_groups: set[str] = set()
+    raw_groups = payload.get("groups", [])
+    for value in raw_groups if isinstance(raw_groups, list) else []:
+        name = str(value or "").strip()[:128]
+        key = name.casefold()
+        if not key or key in seen_groups:
+            continue
+        seen_groups.add(key)
+        groups.append(name)
+        if len(groups) == 20:
+            break
+    return {"identities": identities, "groups": groups}
+
+
+def _identity_reconciliation_snapshot(registry_path: Path, decisions_path: Path) -> Dict[str, Any]:
+    """Read unmatched local manual names and confirmed shared identities, without editing either registry."""
+    try:
+        local_registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        local_registry = {}
+    try:
+        shared_registry = json.loads(sorter.METADAILY_IDENTITY_ALIASES_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        shared_registry = {}
+    try:
+        saved = json.loads(decisions_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        saved = {}
+    saved_decisions = saved.get("decisions", {}) if isinstance(saved, dict) else {}
+    if not isinstance(saved_decisions, dict):
+        saved_decisions = {}
+
+    def strings(value: Any) -> List[str]:
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, list):
+            return [text for item in value for text in strings(item)]
+        if isinstance(value, dict):
+            return [text for item in value.values() for text in strings(item)]
+        return []
+
+    shared_rows: List[Dict[str, Any]] = []
+    shared_keys: set[str] = set()
+    for item in shared_registry.get("identities", []) if isinstance(shared_registry, dict) else []:
+        if not isinstance(item, dict) or str(item.get("status") or "").casefold() != "confirmed":
+            continue
+        canonical = str(item.get("id") or "").strip()
+        if not canonical:
+            continue
+        aliases = set(strings(item.get("display_names")))
+        aliases.update(strings(item.get("search_terms")))
+        aliases.update(strings(item.get("source_only_terms")))
+        aliases.update(strings(item.get("hashtags")))
+        aliases.update(strings(item.get("reddit")))
+        aliases.update(strings(item.get("sources")))
+        aliases.update(strings(item.get("metadaily_collection_sources")))
+        for value in (item.get("primary_folder"), item.get("metadaily_user_group")):
+            aliases.update(strings(value))
+        all_names = {canonical, *aliases}
+        shared_keys.update(sorter.normalize_key(value) for value in all_names if sorter.normalize_key(value))
+        shared_rows.append({
+            "id": canonical,
+            "primary_folder": str(item.get("primary_folder") or ""),
+            "display_names": sorted(set(strings(item.get("display_names"))), key=str.casefold),
+            "aliases": sorted(aliases, key=str.casefold),
+            "sources": sorted(set(strings(item.get("sources"))), key=str.casefold),
+        })
+    manuals: List[Dict[str, Any]] = []
+    for item in local_registry.get("entries", []) if isinstance(local_registry, dict) else []:
+        if not isinstance(item, dict) or str(item.get("family") or "").casefold() != "manual":
+            continue
+        canonical = str(item.get("canonical") or "").strip()
+        aliases = sorted(set(strings(item.get("aliases"))), key=str.casefold)
+        if not canonical:
+            continue
+        if any(sorter.normalize_key(value) in shared_keys for value in [canonical, *aliases]):
+            continue
+        manuals.append({
+            "canonical": canonical,
+            "aliases": aliases,
+            "notes": str(item.get("notes") or ""),
+            "decision": saved_decisions.get(canonical),
+        })
+    manuals.sort(key=lambda item: item["canonical"].casefold())
+    shared_rows.sort(key=lambda item: item["id"].casefold())
+    return {"manual_entries": manuals, "shared_identities": shared_rows, "decisions": saved_decisions}
 
 
 def create_app(
@@ -1120,6 +1354,11 @@ def create_app(
     assorted_root: Path | None = None,
     assorted_associations_path: Path | None = None,
     registry_path: Path = DEFAULT_REGISTRY,
+    manual_groups_path: Path = DEFAULT_MANUAL_GROUPS,
+    manual_group_actions_path: Path | None = None,
+    identity_picker_settings_path: Path | None = None,
+    recent_choices_path: Path | None = None,
+    identity_reconciliation_decisions_path: Path | None = None,
 ) -> Flask:
     face_rebuild_lock_path = face_rebuild_lock_path or Path(os.environ.get("PICORG_FACE_REBUILD_LOCK", str(DEFAULT_FACE_REBUILD_LOCK)))
     if pipeline_lock_path is None:
@@ -1132,6 +1371,11 @@ def create_app(
     evidence_health_path = evidence_health_path or Path(os.environ.get("PICORG_EVIDENCE_HEALTH", str(DEFAULT_EVIDENCE_HEALTH)))
     scheduler_config_path = scheduler_config_path or Path(os.environ.get("PICORG_SCHEDULER_CONFIG", str(DEFAULT_SCHEDULER_CONFIG)))
     scheduler_status_path = scheduler_status_path or Path(os.environ.get("PICORG_SCHEDULER_STATUS", str(DEFAULT_SCHEDULER_STATUS)))
+    identity_picker_settings_path = identity_picker_settings_path or DEFAULT_IDENTITY_PICKER_SETTINGS
+    recent_choices_path = recent_choices_path or DEFAULT_RECENT_CHOICES
+    recent_choices_lock = threading.Lock()
+    identity_reconciliation_decisions_path = identity_reconciliation_decisions_path or DEFAULT_IDENTITY_RECONCILIATION_DECISIONS
+    identity_reconciliation_lock = threading.Lock()
     assorted_root = assorted_root or DEFAULT_ASSORTED_ROOT
     assorted_associations_path = assorted_associations_path or DEFAULT_ASSORTED_ASSOCIATIONS
     ledger_path = ledger_path or decisions_path.with_name("review_decision_ledger.jsonl")
@@ -1191,6 +1435,13 @@ def create_app(
     applied_assignments_by_path: dict[str, Dict[str, Any]] = {}
     queued_assignments_by_path: dict[str, Dict[str, Any]] = {}
     review_identities = _read_decisions(review_identities_path)
+    manual_groups = _read_manual_groups(manual_groups_path)
+    if manual_group_actions_path is None:
+        manual_group_actions_path = (
+            DEFAULT_MANUAL_GROUP_ACTIONS
+            if manual_groups_path == DEFAULT_MANUAL_GROUPS
+            else manual_groups_path.with_name("manual_group_actions.json")
+        )
     assorted_associations = _read_assorted_associations(assorted_associations_path)
     raw_allowed_roots = {str(path) for cluster in clusters for path in cluster["source_roots"] if path}
     rebuild_status_cache: dict[str, Any] = {}
@@ -1238,21 +1489,27 @@ def create_app(
         except OSError:
             return True
 
-    def live_media_paths(paths: List[str], *, check_all: bool = False) -> List[str]:
-        """Return audit paths that still resolve to regular media files."""
-        completed_sources = {
+    completed_move_sources: set[str] = set()
+
+    def refresh_move_history() -> None:
+        nonlocal completed_move_sources
+        move_history[:] = _read_move_history(move_history_path)
+        completed_move_sources = {
             _image_decision_key(str(move.get("source")))
             for operation in move_history
             if not operation.get("undone")
             for move in operation.get("moves", [])
             if isinstance(move, dict) and move.get("source") and move.get("destination")
         }
+
+    def live_media_paths(paths: List[str], *, check_all: bool = False) -> List[str]:
+        """Return audit paths that still resolve to regular media files."""
         live = []
         for path in paths:
             if is_deleted_media_path(path):
                 continue
             key = _image_decision_key(path)
-            if not check_all and key not in completed_sources:
+            if not check_all and key not in completed_move_sources:
                 live.append(path)
                 continue
             try:
@@ -1261,7 +1518,7 @@ def create_app(
                 exists = False
             if exists:
                 live.append(path)
-            elif key in completed_sources:
+            elif key in completed_move_sources:
                 continue
         return live
 
@@ -1419,10 +1676,42 @@ def create_app(
             if sorter.normalize_key(alias) != sorter.normalize_key(target)
         }
         return [
-            {"canonical": item.canonical, "family": item.family, "aliases": list(item.aliases)}
+            {"canonical": item.canonical, "family": item.family, "aliases": list(item.aliases),
+             "source_aliases": {source: list(values) for source, values in getattr(item, "source_aliases", ())},
+             "provenance": list(getattr(item, "provenance", ()))}
             for item in catalog
             if sorter.normalize_key(item.canonical) not in suppressed
         ]
+
+    def identity_rows_with_local_decisions() -> List[Dict[str, Any]]:
+        """Add only local decisions that do not already resolve to a catalog identity."""
+        rows = catalog_rows()
+        alias_targets: Dict[str, set[str]] = {}
+        canonical_keys = set()
+        for row in rows:
+            canonical = str(row.get("canonical") or "").strip()
+            canonical_key = sorter.normalize_key(canonical)
+            if canonical_key:
+                canonical_keys.add(canonical_key)
+            for name in [canonical, *(row.get("aliases") or [])]:
+                alias_key = sorter.normalize_key(str(name))
+                if alias_key and canonical_key:
+                    alias_targets.setdefault(alias_key, set()).add(canonical_key)
+        for item in refresh_review_identities().values():
+            canonical = str(item.get("identity") or "").strip()
+            canonical_key = sorter.normalize_key(canonical)
+            if not canonical_key or canonical_key in canonical_keys:
+                continue
+            names = [canonical, str(item.get("cluster_id") or ""), *(item.get("aliases") or [])]
+            matches: set[str] = set()
+            for name in names:
+                matches.update(alias_targets.get(sorter.normalize_key(str(name)), set()))
+            if len(matches) == 1:
+                continue
+            rows.append({"canonical": canonical, "family": item.get("family", "review"),
+                         "aliases": list(item.get("aliases") or []), "source": "review"})
+            canonical_keys.add(canonical_key)
+        return rows
 
     def run_accuracy_benchmark() -> None:
         started = datetime.now(timezone.utc).isoformat()
@@ -1758,13 +2047,13 @@ def create_app(
         filtered = [
             cluster
             for cluster in clusters
-            if (mode == "all" or (mode == "face" and (cluster.get("face_cluster_labels") or set(cluster.get("review_methods", [])) & {"face-only", "name+face"})) or (mode == "name" and not (cluster.get("face_cluster_labels") or set(cluster.get("review_methods", [])) & {"face-only", "name+face"})))
+            if (mode == "all" or (mode == "face" and (str(cluster.get("key") or "").startswith("folder:") or cluster.get("face_cluster_labels") or set(cluster.get("review_methods", [])) & {"face-only", "name+face", "face-identity"})) or (mode == "name" and not (cluster.get("face_cluster_labels") or set(cluster.get("review_methods", [])) & {"face-only", "name+face", "face-identity"})))
             and (not query or query in cluster["title"].casefold() or query in cluster["key"].casefold() or alias_matches[cluster["cluster_id"]])
             and (not status or (decisions.get(cluster["cluster_id"], {}).get("status", "pending") == status))
         ]
         # Refresh once per request so external UI processes' completed moves
         # are reflected without rereading the ledger for every cluster.
-        move_history[:] = _read_move_history(move_history_path)
+        refresh_move_history()
         live_paths_by_cluster = {
             cluster["cluster_id"]: [
                 path for path in live_media_paths(cluster.get("paths", []))
@@ -1775,6 +2064,29 @@ def create_app(
             cluster_id: confirmed_paths(paths)
             for cluster_id, paths in live_paths_by_cluster.items()
         }
+        all_live_paths = [path for paths in live_paths_by_cluster.values() for path in paths]
+        grouped_paths = manual_group_memberships(all_live_paths)
+        cluster_counts: Dict[str, Dict[str, int]] = {}
+        for cluster in filtered:
+            cluster_id = cluster["cluster_id"]
+            paths = live_paths_by_cluster[cluster_id]
+            hidden_paths = confirmed_by_cluster[cluster_id]
+            grouped_unassigned = sum(
+                bool(grouped_paths.get(path))
+                and path not in hidden_paths
+                and _image_decision_key(path) not in queued_assignments_by_path
+                and _image_decision_key(path) not in pending_assignments
+                for path in paths
+            )
+            total_count = len(paths)
+            hidden_count = len(hidden_paths)
+            unassigned_count = max(0, total_count - hidden_count - grouped_unassigned)
+            cluster_counts[cluster_id] = {
+                "total_count": total_count,
+                "hidden_count": hidden_count,
+                "grouped_unassigned_count": grouped_unassigned,
+                "unassigned_count": unassigned_count,
+            }
         display_paths_by_cluster = {
             cluster_id: [
                 path for path in paths
@@ -1786,6 +2098,12 @@ def create_app(
             cluster for cluster in filtered
             if display_paths_by_cluster[cluster["cluster_id"]]
         ]
+        filtered.sort(key=lambda cluster: (
+            -cluster_counts[cluster["cluster_id"]]["unassigned_count"],
+            -int(cluster.get("quality_rank") or 0),
+            -cluster_counts[cluster["cluster_id"]]["total_count"],
+            cluster["title"].casefold(),
+        ))
         start = (page - 1) * page_size
         return jsonify({
             "total": len(filtered), "page": page, "page_size": page_size,
@@ -1794,7 +2112,13 @@ def create_app(
                 {
                     **_public_cluster(cluster, decisions.get(cluster["cluster_id"])),
                     "count": len(display_paths_by_cluster[cluster["cluster_id"]]),
+                    **cluster_counts[cluster["cluster_id"]],
                     "sample_paths": display_paths_by_cluster[cluster["cluster_id"]][:12],
+                    "manual_groups_by_path": {
+                        path: grouped_paths[path]
+                        for path in display_paths_by_cluster[cluster["cluster_id"]][:12]
+                        if grouped_paths.get(path)
+                    },
                     "identity_alias_match": alias_matches[cluster["cluster_id"]],
                 }
                 for cluster in filtered[start:start + page_size]
@@ -1836,7 +2160,7 @@ def create_app(
         if cluster is None:
             return jsonify({"error": "unknown cluster"}), 404
         hide_confirmed = str(request.args.get("hide_confirmed") or "0").strip().lower() in {"1", "true", "yes"}
-        move_history[:] = _read_move_history(move_history_path)
+        refresh_move_history()
         live_paths = live_media_paths(cluster["paths"], check_all=True)
         hidden = confirmed_paths(live_paths)
         visible_paths = [path for path in live_paths if not hide_confirmed or path not in hidden]
@@ -1845,6 +2169,8 @@ def create_app(
         result["count"] = len(visible_paths)
         result["sample_paths"] = visible_paths[:12]
         result["hidden_confirmed"] = len(hidden)
+        result["face_link_scores"] = cluster.get("face_link_scores", {})
+        result["manual_groups_by_path"] = manual_group_memberships(visible_paths)
         result["image_decisions"] = {
             path: decision for path in cluster["paths"] if (decision := decision_for_path(path)) is not None
         }
@@ -1880,15 +2206,236 @@ def create_app(
 
     @app.get("/api/identities")
     def identities():
-        current_review_identities = refresh_review_identities()
-        result = catalog_rows()
-        result.extend({"canonical": item.get("identity"), "family": item.get("family", "review"), "source": "review"} for item in current_review_identities.values())
+        result = identity_rows_with_local_decisions()
         scope = request.args.get("scope", "")
         if scope == "baseline":
             result = [item for item in result if item.get("family") in BASELINE_IDENTITY_FAMILIES]
         # catalog_rows contains every identity registered by the sorter; all
         # registry families are valid identity targets in the review pickers.
         return jsonify(_aggregate_identity_options(result))
+
+    @app.get("/api/identity-reconciliation")
+    def identity_reconciliation():
+        return jsonify(_identity_reconciliation_snapshot(registry_path, identity_reconciliation_decisions_path))
+
+    @app.get("/identity-reconciliation")
+    def identity_reconciliation_page():
+        return IDENTITY_RECONCILIATION_PAGE
+
+    @app.post("/api/identity-reconciliation")
+    def save_identity_reconciliation():
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "request body must be an object"}), 400
+        source = str(body.get("source") or "").strip()
+        action = str(body.get("action") or "")
+        snapshot = _identity_reconciliation_snapshot(registry_path, identity_reconciliation_decisions_path)
+        manual = next((item for item in snapshot["manual_entries"] if item["canonical"] == source), None)
+        if manual is None:
+            return jsonify({"error": "manual identity is missing or already matches the shared registry"}), 404
+        decision: Dict[str, Any] = {
+            "source": source,
+            "status": "deferred",
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if action == "link":
+            target = str(body.get("target") or "").strip()
+            shared = next((item for item in snapshot["shared_identities"] if item["id"] == target), None)
+            if shared is None:
+                return jsonify({"error": "target must be a confirmed shared identity"}), 400
+            decision.update({"action": "link", "target": target, "status": "ready_for_registry_owner"})
+        elif action == "new":
+            proposed = str(body.get("proposed_id") or "").strip()
+            if not _valid_identity(proposed):
+                return jsonify({"error": "proposed shared identity name is invalid"}), 400
+            shared_keys = {
+                sorter.normalize_key(value)
+                for item in snapshot["shared_identities"]
+                for value in [item["id"], item["primary_folder"], *item["display_names"], *item["aliases"]]
+                if sorter.normalize_key(value)
+            }
+            if sorter.normalize_key(proposed) in shared_keys:
+                return jsonify({"error": "that name already matches a shared identity; link it instead"}), 409
+            decision.update({"action": "new", "proposed_id": proposed, "status": "ready_for_registry_owner"})
+        elif action == "defer":
+            decision.update({"action": "defer", "status": "deferred"})
+        else:
+            return jsonify({"error": "action must be link, new, or defer"}), 400
+        with identity_reconciliation_lock:
+            try:
+                saved = json.loads(identity_reconciliation_decisions_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                saved = {}
+            if not isinstance(saved, dict):
+                saved = {}
+            decisions = saved.get("decisions", {})
+            if not isinstance(decisions, dict):
+                decisions = {}
+            previous = decisions.get(source, {})
+            history = previous.get("history", []) if isinstance(previous, dict) else []
+            if not isinstance(history, list):
+                history = []
+            decision["history"] = [*history, {key: value for key, value in decision.items() if key != "history"}]
+            decisions[source] = decision
+            _atomic_json_write(identity_reconciliation_decisions_path, {
+                "schema_version": 1,
+                "updated_at": decision["reviewed_at"],
+                "decisions": decisions,
+            })
+        return jsonify({"saved": True, "decision": decision, "registry_changed": False}), 201
+
+    def manual_group_move_destinations() -> Dict[str, str]:
+        destinations: Dict[str, str] = {}
+        for operation in move_history:
+            if operation.get("undone"):
+                continue
+            for move in operation.get("moves", []):
+                if isinstance(move, dict) and move.get("source") and move.get("destination"):
+                    destinations[_lexical_path(str(move["source"]))] = str(move["destination"])
+        return destinations
+
+    def remap_manual_group_path(path: str, destinations: Dict[str, str]) -> str:
+        seen: set[str] = set()
+        while (key := _lexical_path(path)) in destinations and key not in seen:
+            seen.add(key)
+            path = destinations[key]
+        return path
+
+    def resolve_manual_group_paths(
+        group: Dict[str, Any], move_destinations: Optional[Dict[str, str]] = None
+    ) -> List[str]:
+        if move_destinations is None:
+            refresh_move_history()
+            move_destinations = manual_group_move_destinations()
+        resolved = []
+        for raw_path in group.get("paths", []):
+            path = remap_manual_group_path(str(raw_path), move_destinations)
+            if is_known_media_path(path) and (path == str(raw_path) or Path(_lexical_path(path)).is_file()):
+                try:
+                    resolved.append(path)
+                except OSError:
+                    continue
+        return sorted(set(resolved))
+
+    def identity_assigned(path: str) -> bool:
+        key = _image_decision_key(path)
+        decision = (
+            image_decisions.get(key)
+            or decision_by_path.get(key)
+            or applied_assignments_by_path.get(key)
+            or {}
+        )
+        return decision.get("status") == "confirmed" and bool(str(decision.get("identity") or "").strip())
+
+    def visible_manual_group_paths(
+        group: Dict[str, Any], move_destinations: Optional[Dict[str, str]] = None
+    ) -> List[str]:
+        return [
+            path for path in resolve_manual_group_paths(group, move_destinations)
+            if not identity_assigned(path)
+        ]
+
+    def manual_group_memberships(paths: Iterable[str]) -> Dict[str, List[str]]:
+        """Return unassigned collection labels for visible paths."""
+        refresh_move_history()
+        move_destinations = manual_group_move_destinations()
+        requested = {_lexical_path(str(path)): str(path) for path in paths}
+        memberships: Dict[str, set[str]] = {path: set() for path in requested.values()}
+        latest_groups = _read_manual_groups(manual_groups_path)
+        for group in latest_groups.values():
+            for raw_path in group.get("paths", []):
+                current_path = remap_manual_group_path(str(raw_path), move_destinations)
+                visible_path = requested.get(_lexical_path(current_path))
+                if visible_path is not None and not identity_assigned(visible_path):
+                    memberships[visible_path].add(group["name"])
+        return {path: sorted(names, key=str.casefold) for path, names in memberships.items() if names}
+
+    @app.get("/api/manual-groups")
+    def list_manual_groups():
+        manual_groups.clear()
+        manual_groups.update(_read_manual_groups(manual_groups_path))
+        refresh_move_history()
+        move_destinations = manual_group_move_destinations()
+        result = [
+            {"name": group["name"], "count": len(visible_manual_group_paths(group, move_destinations)), "updated_at": group.get("updated_at")}
+            for group in manual_groups.values()
+        ]
+        return jsonify(sorted(result, key=lambda item: item["name"].casefold()))
+
+    @app.get("/api/manual-groups/<group_name>")
+    def get_manual_group(group_name: str):
+        key = sorter.normalize_key(group_name)
+        manual_groups.clear()
+        manual_groups.update(_read_manual_groups(manual_groups_path))
+        group = manual_groups.get(key)
+        if group is None:
+            return jsonify({"error": "manual collection not found"}), 404
+        paths = visible_manual_group_paths(group)
+        return jsonify({"name": group["name"], "paths": paths, "count": len(paths), "updated_at": group.get("updated_at"), "manual_groups_by_path": manual_group_memberships(paths)})
+
+    @app.post("/api/manual-groups")
+    def update_manual_group():
+        body = request.get_json(silent=True) or {}
+        name = str(body.get("name") or "").strip()
+        key = sorter.normalize_key(name)
+        if not _valid_identity(name) or not key:
+            return jsonify({"error": "collection name must be a safe, non-empty name"}), 400
+        raw_paths = body.get("paths") or []
+        if not isinstance(raw_paths, list) or not raw_paths or len(raw_paths) > 500:
+            return jsonify({"error": "select 1 to 500 audit images for the collection"}), 400
+        paths = list(dict.fromkeys(str(path) for path in raw_paths if str(path)))
+        if not paths or any(not is_known_media_path(path) for path in paths):
+            return jsonify({"error": "collection members must be media paths from the current audit"}), 400
+        now = datetime.now(timezone.utc).isoformat()
+        with write_lock:
+            latest = _read_manual_groups(manual_groups_path)
+            group = latest.get(key, {"name": name, "paths": [], "created_at": now})
+            existing_paths = resolve_manual_group_paths(group)
+            existing_keys = {_lexical_path(path) for path in existing_paths}
+            added = [path for path in paths if _lexical_path(path) not in existing_keys]
+            group.update({"name": group.get("name") or name, "paths": sorted(set(existing_paths) | set(paths)), "updated_at": now})
+            latest[key] = group
+            undo_id = None
+            if added:
+                undo_id = uuid.uuid4().hex
+                actions = _read_manual_group_actions(manual_group_actions_path)
+                actions.append({
+                    "id": undo_id,
+                    "kind": "group",
+                    "name": group["name"],
+                    "key": key,
+                    "paths": added,
+                    "saved_at": now,
+                    "undone": False,
+                })
+                _write_manual_group_actions(manual_group_actions_path, actions)
+            _atomic_json_write(manual_groups_path, {"schema_version": 1, "updated_at": now, "groups": list(latest.values())})
+            manual_groups.clear()
+            manual_groups.update(latest)
+        return jsonify({"name": group["name"], "added": len(added), "count": len(group["paths"]), "undo_id": undo_id, "identity_changed": False, "files_moved": False}), 201
+
+    @app.post("/api/manual-groups/<group_name>/remove")
+    def remove_manual_group_members(group_name: str):
+        body = request.get_json(silent=True) or {}
+        raw_paths = body.get("paths") or []
+        if not isinstance(raw_paths, list) or not raw_paths or len(raw_paths) > 500:
+            return jsonify({"error": "paths must contain 1 to 500 collection members"}), 400
+        remove_keys = {_lexical_path(str(path)) for path in raw_paths if str(path)}
+        key = sorter.normalize_key(group_name)
+        now = datetime.now(timezone.utc).isoformat()
+        with write_lock:
+            latest = _read_manual_groups(manual_groups_path)
+            group = latest.get(key)
+            if group is None:
+                return jsonify({"error": "manual collection not found"}), 404
+            current_paths = resolve_manual_group_paths(group)
+            group["paths"] = [path for path in current_paths if _lexical_path(path) not in remove_keys]
+            group["updated_at"] = now
+            latest[key] = group
+            _atomic_json_write(manual_groups_path, {"schema_version": 1, "updated_at": now, "groups": list(latest.values())})
+            manual_groups.clear()
+            manual_groups.update(latest)
+        return jsonify({"name": group["name"], "count": len(group["paths"]), "removed": len(remove_keys)}), 200
 
     @app.get("/api/assorted-folders")
     def assorted_folders():
@@ -1977,20 +2524,104 @@ def create_app(
             })
         return jsonify({**record, "moved": [], "applied": False, "message": "Identity association saved; no files were moved."}), 201
 
+    @app.get("/api/identity-picker/settings")
+    def identity_picker_settings():
+        return jsonify({"prefixes": _read_identity_picker_prefixes(identity_picker_settings_path)})
+
+    @app.post("/api/identity-picker/settings")
+    def save_identity_picker_settings():
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "request body must be an object"}), 400
+        try:
+            prefixes = _normalize_identity_picker_prefixes(body.get("prefixes"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        _atomic_json_write(identity_picker_settings_path, {
+            "schema_version": 1,
+            "prefixes": prefixes,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return jsonify({"prefixes": prefixes}), 200
+
+    @app.get("/api/recent-choices")
+    def recent_choices():
+        with recent_choices_lock:
+            return jsonify(_read_recent_choices(recent_choices_path))
+
+    @app.post("/api/recent-choices")
+    def remember_recent_choice():
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify({"error": "request body must be an object"}), 400
+        kind = str(body.get("kind") or "")
+        with recent_choices_lock:
+            recent = _read_recent_choices(recent_choices_path)
+            if kind == "identity":
+                canonical = str(body.get("canonical") or "").strip()[:256]
+                if not canonical:
+                    return jsonify({"error": "canonical identity is required"}), 400
+                family = str(body.get("family") or "review")
+                choice = {"canonical": canonical, "family": family if family in FAMILIES else "review"}
+                recent["identities"] = [choice, *[
+                    item for item in recent["identities"]
+                    if item["canonical"].casefold() != canonical.casefold()
+                ]][:20]
+            elif kind == "group":
+                name = str(body.get("name") or "").strip()[:128]
+                if not name:
+                    return jsonify({"error": "group name is required"}), 400
+                recent["groups"] = [name, *[
+                    item for item in recent["groups"] if item.casefold() != name.casefold()
+                ]][:20]
+            else:
+                return jsonify({"error": "kind must be identity or group"}), 400
+            _atomic_json_write(recent_choices_path, {
+                "schema_version": 1,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                **recent,
+            })
+        return jsonify(recent), 200
+
     @app.get("/api/identity-groups")
     def identity_groups():
         refresh_pending_assignments()
         refresh_face_markers()
         include_paths = request.args.get("include_paths", "0").strip().lower() in {"1", "true", "yes"}
+        prefixes = tuple(value.strip().casefold() for value in request.args.getlist("prefix") if value.strip())
+        verified_examples = request.args.get("verified_examples", "0").strip().lower() in {"1", "true", "yes"}
         # Disk scans of the sorted library are opt-in. The default path uses
         # review/image decisions and confirmed cluster assignments only so the
         # identities tab cannot freeze the UI on a multi-second rglob.
         include_disk = request.args.get("include_disk", "0").strip().lower() in {"1", "true", "yes"}
-        current_review_identities = refresh_review_identities()
         groups: Dict[str, Dict[str, Any]] = {}
+        identity_catalog, _, _, _, preferred_targets = sorter.load_identity_catalog()
+        catalog_by_key: Dict[str, sorter.Identity] = {}
+        for item in identity_catalog:
+            catalog_by_key.setdefault(sorter.normalize_key(item.canonical), item)
+        catalog_alias_targets: Dict[str, set[str]] = {}
+        for item in identity_catalog:
+            for name in [item.canonical, *item.aliases]:
+                key = sorter.normalize_key(name)
+                if key:
+                    catalog_alias_targets.setdefault(key, set()).add(sorter.normalize_key(item.canonical))
+
         def ensure_group(raw_identity: str, family: str, aliases: Iterable[str] = ()) -> Dict[str, Any]:
-            """Merge case-only identity variants while retaining the first canonical spelling."""
-            key = raw_identity.strip().casefold()
+            """Display known aliases under one catalog canonical, retaining the alias as metadata."""
+            raw_name = raw_identity.strip()
+            raw_key = sorter.normalize_key(raw_name)
+            target_key = preferred_targets.get(raw_key)
+            if not target_key:
+                alias_targets = catalog_alias_targets.get(raw_key, set())
+                if len(alias_targets) == 1:
+                    target_key = next(iter(alias_targets))
+            catalog_identity = catalog_by_key.get(target_key or raw_key)
+            if catalog_identity is not None:
+                raw_identity = catalog_identity.canonical
+                family = catalog_identity.family
+                if sorter.normalize_key(raw_name) != sorter.normalize_key(raw_identity):
+                    aliases = (*aliases, raw_name)
+            key = sorter.normalize_key(raw_identity)
             generic = sorter.normalize_key(raw_identity) in (
                 sorter.PROJECT_BLOCKED_TOKENS | sorter.PROJECT_AMBIGUOUS_TOKENS
             )
@@ -2010,8 +2641,7 @@ def create_app(
                 key=str.casefold,
             )
             return group
-        rows = [{"canonical": item["canonical"], "family": item["family"], "aliases": item.get("aliases", [])} for item in catalog_rows()]
-        rows.extend({"canonical": item.get("identity"), "family": item.get("family", "review"), "aliases": item.get("aliases", [])} for item in current_review_identities.values())
+        rows = [{"canonical": item["canonical"], "family": item["family"], "aliases": item.get("aliases", [])} for item in identity_rows_with_local_decisions()]
         for identity in rows:
             raw_identity = str(identity.get("canonical") or "").strip()
             if raw_identity:
@@ -2069,6 +2699,21 @@ def create_app(
             group["paths"] = sorted(set(group["paths"]))
             group["count"] = len(group["paths"])
             group["sample_paths"] = group["paths"][:12]
+            if verified_examples and prefixes and group["identity"].casefold().startswith(prefixes):
+                image_extensions = MEDIA_EXTENSIONS - {".mp4", ".mov"}
+                examples = []
+                for raw_path in group["paths"]:
+                    if Path(raw_path).suffix.casefold() not in image_extensions:
+                        continue
+                    candidate = Path(_lexical_path(raw_path))
+                    try:
+                        if not candidate.is_symlink() and candidate.is_file():
+                            examples.append(raw_path)
+                    except OSError:
+                        continue
+                    if len(examples) == 2:
+                        break
+                group["sample_paths"] = examples
             statuses = group.pop("status_by_path", {})
             group["confirmed"] = sum(statuses.get(path) == "confirmed" for path in group["paths"])
             group["pending"] = sum(statuses.get(path, "pending") == "pending" for path in group["paths"])
@@ -2079,7 +2724,19 @@ def create_app(
             if not include_paths:
                 group.pop("paths", None)
             group["disk_scanned"] = include_disk
-        return jsonify(sorted(groups.values(), key=lambda item: (str(item.get("family") or "").casefold(), item["identity"].casefold())))
+        sample_memberships = manual_group_memberships(
+            path for group in groups.values() for path in group.get("sample_paths", [])
+        )
+        for group in groups.values():
+            group["manual_groups_by_path"] = {
+                path: sample_memberships[path]
+                for path in group.get("sample_paths", [])
+                if sample_memberships.get(path)
+            }
+        result = sorted(groups.values(), key=lambda item: (str(item.get("family") or "").casefold(), item["identity"].casefold()))
+        if prefixes:
+            result = [item for item in result if item["identity"].casefold().startswith(prefixes)]
+        return jsonify(result)
 
     @app.post("/api/identities")
     def create_review_identity():
@@ -2630,6 +3287,92 @@ def create_app(
         restored_paths.extend(str(item.get("destination")) for item in restored if item.get("destination"))
         return jsonify({"move_id": move_id, "restored": restored, "restored_paths": restored_paths, "errors": errors, "undone": operation["undone"]}), 200 if not errors else 409
 
+    def latest_undo_action() -> Dict[str, Any] | None:
+        move_payload = list_move_operations().get_json() or {}
+        candidates = []
+        for operation in move_payload.get("operations", []):
+            if operation.get("undone"):
+                continue
+            moves = operation.get("moves") or []
+            if not moves and not operation.get("assignment_id"):
+                continue
+            candidates.append({
+                "kind": "move",
+                "id": str(operation.get("id") or ""),
+                "identity": str(operation.get("identity") or ""),
+                "saved_at": str(operation.get("saved_at") or ""),
+                "count": len(moves) or 1,
+            })
+        candidates.extend(
+            {
+                "kind": "group",
+                "id": str(action.get("id") or ""),
+                "identity": str(action.get("name") or ""),
+                "saved_at": str(action.get("saved_at") or ""),
+                "count": len(action.get("paths") or []),
+            }
+            for action in _read_manual_group_actions(manual_group_actions_path)
+            if not action.get("undone") and action.get("id")
+        )
+        return max(candidates, key=lambda item: item["saved_at"], default=None)
+
+    @app.get("/api/undo/latest")
+    def get_latest_undo_action():
+        action = latest_undo_action()
+        return jsonify({"available": action is not None, "action": action})
+
+    @app.post("/api/undo/latest")
+    def undo_latest_action():
+        action = latest_undo_action()
+        if action is None:
+            return jsonify({"error": "no reversible assignment or group action"}), 404
+        if action["kind"] == "move":
+            response = undo_move_operation(action["id"])
+            if response.status_code >= 400:
+                return response
+            return jsonify({**(response.get_json() or {}), "kind": "move", "identity": action["identity"]}), response.status_code
+
+        now = datetime.now(timezone.utc).isoformat()
+        action_id = action["id"]
+        group_action = None
+        removed_paths: List[str] = []
+        with write_lock:
+            actions = _read_manual_group_actions(manual_group_actions_path)
+            group_action = next((item for item in reversed(actions) if item.get("id") == action_id), None)
+            if group_action is None or group_action.get("undone"):
+                return jsonify({"error": "group assignment was already undone"}), 409
+            latest = _read_manual_groups(manual_groups_path)
+            group_key = str(group_action.get("key") or sorter.normalize_key(group_action.get("name") or ""))
+            group = latest.get(group_key)
+            if group is None:
+                return jsonify({"error": "manual collection no longer exists"}), 409
+            target_keys = {_lexical_path(str(path)) for path in group_action.get("paths", [])}
+            current_paths = list(group.get("paths", []))
+            removed_paths = [path for path in current_paths if _lexical_path(str(path)) in target_keys]
+            group["paths"] = [path for path in current_paths if _lexical_path(str(path)) not in target_keys]
+            group["updated_at"] = now
+            latest[group_key] = group
+            _atomic_json_write(manual_groups_path, {"schema_version": 1, "updated_at": now, "groups": list(latest.values())})
+            group_action["undone"] = True
+            group_action["undone_at"] = now
+            _write_manual_group_actions(manual_group_actions_path, actions)
+            manual_groups.clear()
+            manual_groups.update(latest)
+        _append_review_ledger(ledger_path, {
+            "event": "manual_group_undo",
+            "undo_id": action_id,
+            "name": group_action.get("name"),
+            "removed_paths": removed_paths,
+            "saved_at": now,
+        })
+        return jsonify({
+            "kind": "group",
+            "undo_id": action_id,
+            "identity": group_action.get("name"),
+            "removed_paths": removed_paths,
+            "undone": True,
+        })
+
     @app.get("/api/face-markers")
     def face_markers_summary():
         confirmed = [item for item in face_markers.values() if item.get("status") == "confirmed"]
@@ -2788,6 +3531,52 @@ def create_app(
                 })
         return jsonify({"saved": len(cluster_ids), "cluster_ids": cluster_ids}), 201
 
+    @app.get("/api/identity-preview/<identity_name>")
+    def identity_preview(identity_name: str):
+        if not _valid_identity(identity_name):
+            return jsonify({"error": "invalid identity"}), 400
+        catalog, alias_index, _, _, preferred_targets = sorter.load_identity_catalog()
+        catalog_by_key = {sorter.normalize_key(item.canonical): item for item in catalog}
+        key = sorter.normalize_key(identity_name)
+        target_key = preferred_targets.get(key, key)
+        identity = catalog_by_key.get(target_key)
+        if identity is None:
+            matches = [item for item in catalog if any(sorter.normalize_key(alias) == key for alias in item.aliases)]
+            if len(matches) == 1:
+                identity = matches[0]
+        if identity is None:
+            return jsonify({"error": "identity is not in the registry"}), 404
+        resolved_aliases = {identity.canonical}
+        canonical_key = sorter.normalize_key(identity.canonical)
+        for alias in identity.aliases:
+            alias_key = sorter.normalize_key(alias)
+            alias_owners = alias_index.get(alias_key, set())
+            preferred = preferred_targets.get(alias_key)
+            if (len(alias_owners) == 1 and next(iter(alias_owners)).canonical == identity.canonical) or preferred == canonical_key:
+                if _valid_identity(alias):
+                    resolved_aliases.add(alias)
+        directories = {sorter.destination_for(identity, DEFAULT_REVIEW_DEST_ROOT)}
+        family_dirs = FAMILIES | {"redditdaily", "linked"}
+        for alias in resolved_aliases:
+            if identity.family == "linked":
+                directories.add(DEFAULT_REVIEW_DEST_ROOT / alias)
+            for family in family_dirs:
+                directories.add(DEFAULT_REVIEW_DEST_ROOT / family / alias)
+        try:
+            paths = set()
+            image_extensions = MEDIA_EXTENSIONS - {".mp4", ".mov", ".webm", ".m4v"}
+            for identity_dir in sorted(directories, key=lambda path: str(path).casefold()):
+                if identity_dir.is_symlink() or not identity_dir.is_dir():
+                    continue
+                for path in iter_media_files(identity_dir):
+                    if path.suffix.lower() in image_extensions and is_known_media_path(str(path)):
+                        paths.add(str(path))
+        except OSError as exc:
+            LOGGER.warning("identity preview scan failed for %s (%s)", identity.canonical, exc)
+            return jsonify({"error": "identity preview is temporarily unavailable"}), 503
+        sorted_paths = sorted(paths, key=str.casefold)
+        return jsonify({"identity": identity.canonical, "count": len(sorted_paths), "paths": sorted_paths[:36]}), 200
+
     @app.get("/media")
     def media():
         raw_path = str(request.args.get("path") or "")
@@ -2816,33 +3605,42 @@ HTML_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Picorg candidate review</title>
 <style>
 body{font:14px system-ui;margin:0;color:#202124;background:#f6f7f9}main{display:grid;grid-template-columns:330px 1fr;min-height:100vh}.side{background:#20252b;color:#f5f7fa;padding:18px;overflow:auto}.side h1{font-size:20px}.cluster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}.cluster{display:grid;grid-template-columns:88px 1fr;gap:10px;width:100%;text-align:left;background:#2d343c;color:inherit;border:1px solid #46505a;border-radius:8px;padding:8px;margin:0;cursor:pointer}.cluster.active{border-color:#7cc4ff}.cluster-thumb{width:88px;height:88px;object-fit:cover;border-radius:5px;background:#111}.cluster-body{min-width:0}.cluster-title{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cluster small{display:block;color:#b7c0ca;margin-top:3px}.cluster-actions{display:flex;gap:6px;margin-top:8px}.cluster-actions button{padding:5px 7px;font-size:12px}.approve{background:#1f8a55;color:#fff;border:0;border-radius:4px}.reject{background:#a84141;color:#fff;border:0;border-radius:4px}.detail{padding:24px;max-width:1100px}.meta{background:white;padding:12px;border-radius:8px;margin-bottom:16px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.grid img,.grid video{width:100%;height:160px;object-fit:cover;background:#ddd;border-radius:6px}.grid a{cursor:zoom-in}.imageSelect{width:22px;height:22px;accent-color:#176b87;cursor:pointer;align-self:start;justify-self:center;margin:4px}.form{background:white;padding:16px;border-radius:8px;margin-top:16px;display:grid;gap:9px;max-width:650px}input,select,textarea,button{font:inherit;padding:8px}button{cursor:pointer}button:disabled{cursor:wait;opacity:.6}:focus-visible{outline:3px solid #7cc4ff;outline-offset:2px}.status{min-height:22px;color:#176b37}.muted{color:#68737d}.media-modal{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.86)}.media-modal[hidden]{display:none}.media-modal-content{max-width:95vw;max-height:90vh}.media-modal-content img,.media-modal-content video{display:block;max-width:95vw;max-height:85vh;object-fit:contain}.media-modal-close{position:absolute;top:12px;right:18px;border:0;border-radius:6px;background:#fff;color:#111;font-size:24px;line-height:1;padding:6px 12px}.media-modal-caption{color:#fff;max-width:95vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:8px}@media(max-width:700px){main{display:block}.side{position:static}.detail{padding:14px}.cluster-grid{grid-template-columns:1fr}.detail{padding:14px}.grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}.grid img,.grid video{height:120px}}@media(min-width:701px){.side{grid-column:1}.cluster-grid{grid-template-columns:1fr}}
-</style></head><body><main><aside class="side"><h1>Candidate clusters</h1><div id="summary" class="muted" aria-live="polite">Loading…</div><div id="accuracyTools" class="accuracy-tools"><b>Accuracy tools</b><button id="refreshIdentities" type="button" onclick="refreshIdentities()">Refresh identities</button><button id="runBenchmark" type="button" onclick="runAccuracyBenchmark()">Run image-level benchmark</button><pre id="accuracyStatus" class="muted" aria-live="polite">Not run</pre></div><label for="filter">Search clusters</label><input id="filter" placeholder="Filter clusters" oninput="loadPage(true)"><div id="list" aria-live="polite"></div><div><button id="nextPage" type="button" onclick="loadPage(false)">Next page</button></div></aside><section class="detail" aria-live="polite"><div id="detail"><h2>Select a cluster</h2><p class="muted">Review the images, then record an explicit identity decision.</p></div></section></main><div id="mediaModal" class="media-modal" hidden role="dialog" aria-modal="true" aria-label="Media preview"><button class="media-modal-close" type="button" onclick="closeMediaModal()" aria-label="Close preview">×</button><div id="mediaModalContent" class="media-modal-content"></div></div>
+</style></head><body><main><aside class="side"><h1>Candidate clusters</h1><div id="summary" class="muted" aria-live="polite">Loading…</div><div id="accuracyTools" class="accuracy-tools"><b>Accuracy tools</b><button id="refreshIdentities" type="button" onclick="refreshIdentities()">Refresh identities</button><button id="runBenchmark" type="button" onclick="runAccuracyBenchmark()">Run image-level benchmark</button><pre id="accuracyStatus" class="muted" aria-live="polite">Not run</pre></div><label for="filter">Search clusters</label><input id="filter" placeholder="Filter clusters" oninput="loadPage(true)"><div id="list" aria-live="polite"></div><div><button id="nextPage" type="button" onclick="loadPage(false)">Next page</button></div></aside><section class="detail" aria-live="polite"><div id="detail"><h2>Select a cluster</h2><p class="muted">Review the images, then record an explicit identity decision.</p></div></section></main><div id="mediaModal" class="media-modal" hidden role="dialog" aria-modal="true" aria-label="Media preview"><button class="media-modal-close" type="button" aria-label="Close preview">×</button><div id="mediaModalContent" class="media-modal-content"></div></div>
 <script>
-let clusters=[], selected=null;
+let clusters=[], selected=null, manualGroupMembershipsByPath={};
 let currentClusterImageDecisions={}, currentClusterAssignment=null, currentIdentityAssignment=null, lastMoveId=null, hideConfirmed=true;
 let page=1, hasNext=false, clusterMode='face';
 function openMediaModal(event, anchor){if(event.target.closest('.imageSelect'))return;event.preventDefault();let path=anchor.getAttribute('href');let mediaPath=new URL(path,location.href).searchParams.get('path')||path;let source=anchor.querySelector('img,video');let modal=document.querySelector('#mediaModal');let content=document.querySelector('#mediaModalContent');content.replaceChildren();let media=document.createElement(mediaPath.toLowerCase().match(/[.](mp4|mov)$/)?'video':'img');media.src=path;media.alt=source?.alt||'Full-size media preview';if(media.tagName==='VIDEO'){media.controls=true;media.autoplay=true;media.muted=true}content.append(media);let caption=document.createElement('div');caption.className='media-modal-caption';caption.textContent=mediaPath;content.append(caption);modal.hidden=false;document.querySelector('.media-modal-close').focus()}
-function closeMediaModal(){let modal=document.querySelector('#mediaModal');modal.hidden=true;document.querySelector('#mediaModalContent').replaceChildren()}
+function closeMediaModal(){let modal=document.querySelector('#mediaModal'),content=document.querySelector('#mediaModalContent');if(!modal||modal.hidden)return;modal.hidden=true;content?.replaceChildren()}
+document.querySelector('#mediaModal').addEventListener('click',event=>{if(event.target.closest?.('.media-modal-close')){event.preventDefault();event.stopPropagation();closeMediaModal();return}if(event.target.id==='mediaModal')closeMediaModal()});
 document.querySelector('#mediaModal').addEventListener('click',event=>{if(event.target.id==='mediaModal')closeMediaModal()});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!document.querySelector('#mediaModal').hidden)closeMediaModal()});
+function persistRecentChoice(kind,value,family='review'){let body=kind==='identity'?{kind,canonical:value,family}:{kind,name:value};fetch('/api/recent-choices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).catch(()=>{})}
 function renderAccuracyStatus(data){let output=document.querySelector('#accuracyStatus');let button=document.querySelector('#runBenchmark');if(!output||!button)return;button.disabled=Boolean(data.running);button.textContent=data.running?'Benchmark running…':'Run image-level benchmark';let lines=(data.lines||[]).slice(-8);if(data.running)lines.unshift('Running review-only calibration…');else if(data.exit_code===0)lines.unshift('Completed successfully.');else if(data.exit_code!==null)lines.unshift('Failed (exit '+data.exit_code+').');output.textContent=lines.join('\n')||'Not run'}
 async function loadAccuracyStatus(){try{let response=await fetch('/api/accuracy-benchmark',{headers:{Accept:'application/json'}});let data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);renderAccuracyStatus(data);if(data.running)window.setTimeout(loadAccuracyStatus,2000)}catch(error){let output=document.querySelector('#accuracyStatus');if(output)output.textContent='Unable to read benchmark status: '+error.message}}
 async function runAccuracyBenchmark(){let button=document.querySelector('#runBenchmark');if(button)button.disabled=true;try{let response=await fetch('/api/accuracy-benchmark',{method:'POST',headers:{Accept:'application/json'}});let data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);renderAccuracyStatus(data);loadAccuracyStatus()}catch(error){if(button)button.disabled=false;let output=document.querySelector('#accuracyStatus');if(output)output.textContent='Unable to start benchmark: '+error.message}}
 async function init(){let a=await fetch('/api/summary').then(x=>x.json());document.querySelector('#summary').textContent=`${a.clusters} clusters · ${a.decisions} saved decisions`;await loadPage(true)}
 async function loadPage(reset){if(reset){page=1;clusters=[]}let q=encodeURIComponent(document.querySelector('#filter').value);let c=await fetch(`/api/clusters?page=${page}&page_size=50&mode=${clusterMode}&hide_confirmed=${hideConfirmed?'1':'0'}&q=${q}`).then(x=>x.json());clusters=reset?c.clusters:clusters.concat(c.clusters);hasNext=c.has_next;document.querySelector('#summary').textContent=`${c.total} face matching clusters · loaded ${clusters.length}`;renderList();if(reset&&clusters[0]){select(clusters[0].cluster_id);page=2}else if(!reset&&hasNext)page++}
-function mediaTile(path,assignment){let item=assignment||{};let identity=item.identity||'';let family=item.family||'review';let state=item.status||'pending';let queueStatus=item.queued_status||'';let stateLabel=state==='queued'?'Queued · '+(queueStatus||'pending'):['error','conflict','rejected'].includes(state)?'Move '+state:state;if(hideConfirmed&&state==='confirmed')return '';let encodedPath=encodeURIComponent(path);let encodedIdentity=encodeURIComponent(identity);let encodedFamily=encodeURIComponent(family);let assignmentHtml=identity?`<div class="image-assignment"><span>Assigned: <b>${esc(identity)}</b></span><span class="image-state" role="status">${esc(stateLabel)}</span><button class="confirm-image" type="button" ${state==='confirmed'?'disabled':''} onclick="confirmImage(event,decodeURIComponent('${encodedPath}'),decodeURIComponent('${encodedIdentity}'),decodeURIComponent('${encodedFamily}'))">${state==='confirmed'?'Confirmed':state==='queued'?'Queued':'Confirm'}</button><details class="image-actions"><summary aria-label="More image actions">⋯</summary><menu><li><button type="button" onclick="unassignImage(event,decodeURIComponent('${encodedPath}'))">Unassign</button></li><li><button type="button" onclick="reassignImage(event,decodeURIComponent('${encodedPath}'))">Reassign</button></li></menu></details></div>`:'';let queuedOverlay=state==='queued'?`<span class="media-queued-overlay" aria-label="Assignment queued for ${esc(identity)}">Queued for ${esc(identity)}</span>`:'';return `<div class="media-tile"><label class="select-control"><input type="checkbox" class="imageSelect" data-path="${esc(path)}" aria-label="Select ${esc(path)}"><span>Select</span></label><a href="/media?path=${encodedPath}" onclick="openMediaModal(event,this)"><img src="/media?path=${encodedPath}" loading="lazy" title="${esc(path)}" alt="Preview of ${esc(path)}">${queuedOverlay}</a>${assignmentHtml}</div>`}
- function renderList(){let q=document.querySelector('#filter').value.toLowerCase();document.querySelector('#list').className='cluster-grid';document.querySelector('#list').innerHTML=clusters.filter(x=>x.identity_alias_match||(x.title+' '+x.expected_identities.join(' ')).toLowerCase().includes(q)).map(x=>{let path=x.sample_paths?.[0]||'';let thumb=path?`<img class="cluster-thumb" src="/media?path=${encodeURIComponent(path)}" alt="Thumbnail for ${esc(x.title)}" loading="lazy">`:'<div class="cluster-thumb" aria-hidden="true"></div>';let status=x.decision?.status||'pending';return `<article class="cluster ${selected===x.cluster_id?'active':''}" role="button" tabindex="0" onclick="select('${x.cluster_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();select('${x.cluster_id}')}" aria-label="Open ${esc(x.title)}"><div>${thumb}</div><div class="cluster-body"><b class="cluster-title">${esc(x.title)}</b><small>${x.count} files · ${status}</small><div class="cluster-actions"><button type="button" class="approve" onclick="setClusterStatus(event,'${x.cluster_id}','approve')">Approve</button><button type="button" class="reject" onclick="setClusterStatus(event,'${x.cluster_id}','reject')">Reject</button></div></div></article>`}).join('')}
+function manualGroupBadgeMarkup(path){let groups=manualGroupMembershipsByPath[path]||[];return groups.length?`<span class="manual-group-badges" aria-label="Manual collections">${groups.map(name=>`<span class="manual-group-badge">${esc(name)}</span>`).join('')}</span>`:''}
+function updateManualGroupMembership(path,name){if(!path||!name)return;let groups=manualGroupMembershipsByPath[path]||[];if(!groups.includes(name))manualGroupMembershipsByPath[path]=[...groups,name].sort((a,b)=>a.localeCompare(b));let tile=[...document.querySelectorAll('#detail .media-tile')].find(item=>item.querySelector('.imageSelect')?.dataset.path===path);let anchor=tile?.querySelector('a');if(anchor){anchor.querySelector('.manual-group-badges')?.remove();anchor.insertAdjacentHTML('beforeend',manualGroupBadgeMarkup(path))}for(const thumb of [...document.querySelectorAll('.cluster-thumb-wrap')].filter(item=>item.dataset.path===path)){thumb.querySelector('.manual-group-badges')?.remove();thumb.insertAdjacentHTML('beforeend',manualGroupBadgeMarkup(path))}let frame=document.querySelector('#mediaModalContent .media-preview-frame');if(frame&&modalPaths[modalIndex]===path){frame.querySelector('.manual-group-badges')?.remove();frame.insertAdjacentHTML('beforeend',manualGroupBadgeMarkup(path))}}
+function mediaTile(path,assignment){let item=assignment||{};let identity=item.identity||'';let family=item.family||'review';let state=item.status||'pending';let queueStatus=item.queued_status||'';let stateLabel=state==='queued'?'Queued · '+(queueStatus||'pending'):['error','conflict','rejected'].includes(state)?'Move '+state:state;if(hideConfirmed&&state==='confirmed')return '';let encodedPath=encodeURIComponent(path);let encodedIdentity=encodeURIComponent(identity);let encodedFamily=encodeURIComponent(family);let assignmentHtml=identity?`<div class="image-assignment"><span>Assigned: <b>${esc(identity)}</b></span><span class="image-state" role="status">${esc(stateLabel)}</span><button class="confirm-image" type="button" ${state==='confirmed'?'disabled':''} onclick="confirmImage(event,decodeURIComponent('${encodedPath}'),decodeURIComponent('${encodedIdentity}'),decodeURIComponent('${encodedFamily}'))">${state==='confirmed'?'Confirmed':state==='queued'?'Queued':'Confirm'}</button><details class="image-actions"><summary aria-label="More image actions">⋯</summary><menu><li><button type="button" onclick="unassignImage(event,decodeURIComponent('${encodedPath}'))">Unassign</button></li><li><button type="button" onclick="reassignImage(event,decodeURIComponent('${encodedPath}'))">Reassign</button></li></menu></details></div>`:'';let queuedOverlay=state==='queued'?`<span class="media-queued-overlay" aria-label="Assignment queued for ${esc(identity)}">Queued for ${esc(identity)}</span>`:'';return `<div class="media-tile"><label class="select-control"><input type="checkbox" class="imageSelect" data-path="${esc(path)}" aria-label="Select ${esc(path)}"><span>Select</span></label><a href="/media?path=${encodedPath}" onclick="openMediaModal(event,this)"><img src="/media?path=${encodedPath}" loading="lazy" title="${esc(path)}" alt="Preview of ${esc(path)}">${queuedOverlay}${manualGroupBadgeMarkup(path)}</a>${assignmentHtml}</div>`}
+ function renderList(){let q=document.querySelector('#filter').value.toLowerCase();document.querySelector('#list').className='cluster-grid';document.querySelector('#list').innerHTML=clusters.filter(x=>x.identity_alias_match||(x.title+' '+x.expected_identities.join(' ')).toLowerCase().includes(q)).map(x=>{let path=x.sample_paths?.[0]||'';let thumb=path?`<div class="cluster-thumb-wrap" data-path="${esc(path)}"><img class="cluster-thumb" src="/media?path=${encodeURIComponent(path)}" alt="Thumbnail for ${esc(x.title)}" loading="lazy">${manualGroupBadgeMarkup(path)}</div>`:'<div class="cluster-thumb" aria-hidden="true"></div>';let status=x.decision?.status||'pending';return `<article class="cluster ${selected===x.cluster_id?'active':''}" role="button" tabindex="0" onclick="select('${x.cluster_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();select('${x.cluster_id}')}" aria-label="Open ${esc(x.title)}"><div>${thumb}</div><div class="cluster-body"><b class="cluster-title">${esc(x.title)}</b><small>${x.count} files · ${status}</small><div class="cluster-actions"><button type="button" class="approve" onclick="setClusterStatus(event,'${x.cluster_id}','approve')">Approve</button><button type="button" class="reject" onclick="setClusterStatus(event,'${x.cluster_id}','reject')">Reject</button></div></div></article>`}).join('')}
 async function setClusterStatus(event,id,status){event.stopPropagation();let item=clusters.find(x=>x.cluster_id===id)||{};let endpoint='/api/clusters/'+id+'/status';let body={status};if(status==='approve'){let suggested=item.expected_identities?.[0]||item.title||'';let identity=window.prompt('Confirm the identity for this cluster:',suggested);if(!identity?.trim())return;let risky=(item.count||0)>=100||!item.expected_identities?.length||!(item.face_cluster_labels||[]).length||(item.face_cluster_labels||[]).length>1||(item.families||[]).length>1;if(risky&&!window.confirm('This cluster is large, name-only, or has mixed face/source evidence. Review individual images when people may be mixed. Continue?'))return;if(!window.confirm('Confirm '+identity.trim()+' for '+(item.count||0)+' file(s) and move them into the identity folder?'))return;endpoint='/api/decisions';body={cluster_id:id,identity:identity.trim(),family:item.family||'review',status:'confirmed',purity_ack:risky,aliases:[],notes:'Approved from cluster card after identity confirmation'}}let r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=await r.json();if(!r.ok){alert(d.error||'Unable to save review status');return}if(item)item.decision=d.decision||d;renderList();if(status==='approve')await select(id)}
-async function select(id){if(!id)return;selected=id;renderList();let x=await fetch('/api/clusters/'+id,{headers:{Accept:'application/json'}}).then(async r=>{let data=await r.json();if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data});currentClusterImageDecisions=x.image_decisions||{};currentClusterAssignment=x.decision||null;currentIdentityAssignment=null;let images=x.sample_paths.map(path=>mediaTile(path,currentClusterImageDecisions[path]||currentClusterAssignment)).join('');let sampleCount=x.sample_paths.length;let loadAll=(x.count||0)>sampleCount?`<div class="identity-toolbar"><button type="button" id="loadAllImages" onclick="loadClusterImages()">Load all ${x.count} images</button><span class="muted">Showing ${sampleCount} samples first</span></div>`:'';document.querySelector('#detail').innerHTML=`<h2>${esc(x.title)}</h2><div class="meta"><b>${x.count} files</b><br>Expected labels: ${esc(x.expected_identities.join(', ')||'none')}<br>Sources: ${esc(x.source_roots.join(', '))}</div>${loadAll}<div class="grid" data-loaded="sample">${images}</div><form class="form" onsubmit="save(event)"><label>Filter identities <input id="identityFilter" oninput="filterIdentityOptions()" placeholder="Type a name to narrow the list"></label><label>Assign to identity <select id="identity" required><option value="">Loading identities…</option></select></label><label>Family <select id="family">${['manual','metadaily','redditdaily','reddit_follow','reddit_subreddit','pscrape','review'].map(f=>`<option ${x.decision?.family===f?'selected':''}>${f}</option>`).join('')}</select></label><label>New identity <input id="newIdentity" value="" placeholder="Type only when creating a new identity"></label><label>Aliases, one per line<textarea id="aliases" placeholder="optional aliases">${esc((x.decision?.aliases||[]).join('\n'))}</textarea></label><label>Evidence / notes<textarea id="notes" placeholder="Why this assignment is supported">${esc(x.decision?.notes||'')}</textarea></label><button>Save explicit decision</button><div class="status" id="status"></div></form>`;loadIdentityOptions(x.decision?.identity||'')}
+let pendingClusterDetail=null;
+async function select(id){if(!id)return;selected=id;renderList();let x=await fetch('/api/clusters/'+id,{headers:{Accept:'application/json'}}).then(async r=>{let data=await r.json();if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data});if(selected===id)pendingClusterDetail={id,data:x};manualGroupMembershipsByPath={...manualGroupMembershipsByPath,...(x.manual_groups_by_path||{})};currentClusterImageDecisions=x.image_decisions||{};currentClusterAssignment=x.decision||null;currentIdentityAssignment=null;let images=x.sample_paths.map(path=>mediaTile(path,currentClusterImageDecisions[path]||currentClusterAssignment)).join('');let sampleCount=x.sample_paths.length;let loadAll=(x.count||0)>sampleCount?`<div class="identity-toolbar"><button type="button" id="loadAllImages" onclick="loadClusterImages()">Load all ${x.count} images</button><span class="muted">Showing ${sampleCount} samples first</span></div>`:'';document.querySelector('#detail').innerHTML=`<h2>${esc(x.title)}</h2><div class="meta"><b>${x.count} files</b><br>Expected labels: ${esc(x.expected_identities.join(', ')||'none')}<br>Sources: ${esc(x.source_roots.join(', '))}</div>${loadAll}<div class="grid" data-loaded="sample">${images}</div><form class="form" onsubmit="save(event)"><label>Filter identities <input id="identityFilter" oninput="filterIdentityOptions()" placeholder="Type a name to narrow the list"></label><div id="recentIdentityList" class="recent-identity-shortlist" role="group" aria-label="Recently used identities"></div><label>Assign to identity <select id="identity" required><option value="">Loading identities…</option></select></label><label>Family <select id="family">${['linked','manual','metadaily','redditdaily','reddit_follow','reddit_subreddit','pscrape','review'].map(f=>`<option ${x.decision?.family===f?'selected':''}>${f}</option>`).join('')}</select></label><label>New identity <input id="newIdentity" value="" placeholder="Type only when creating a new identity"></label><label>Aliases, one per line<textarea id="aliases" placeholder="optional aliases">${esc((x.decision?.aliases||[]).join('\n'))}</textarea></label><label>Evidence / notes<textarea id="notes" placeholder="Why this assignment is supported">${esc(x.decision?.notes||'')}</textarea></label><button type="submit" class="approve">Save explicit decision</button><div class="status" id="status"></div></form>`;loadIdentityOptions(x.decision?.identity||'')}
 let identityOptions=[];let selectedIdentityValue='';
 const RECENT_IDENTITY_STORAGE_KEY='picorg.recent-identities.v1';
 let recentIdentityUses=[];
-try{let storedRecent=JSON.parse(localStorage.getItem(RECENT_IDENTITY_STORAGE_KEY)||'[]');if(Array.isArray(storedRecent))recentIdentityUses=storedRecent.filter(item=>item&&typeof item.canonical==='string'&&item.canonical.trim()).slice(0,12)}catch(_error){}
+try{let storedRecent=JSON.parse(localStorage.getItem(RECENT_IDENTITY_STORAGE_KEY)||'[]');if(Array.isArray(storedRecent))recentIdentityUses=storedRecent.filter(item=>item&&typeof item.canonical==='string'&&item.canonical.trim()).slice(0,20)}catch(_error){}
 function identityOptionMatches(item,query){let value=item?.canonical||'';return Boolean(value&&(!query||value.toLocaleLowerCase().includes(query)||(item.aliases||[]).some(alias=>String(alias).toLocaleLowerCase().includes(query))))}
 function matchingRecentIdentityOptions(query){let catalog=new Map(identityOptions.map(item=>[String(item.canonical||'').toLocaleLowerCase(),item]));return recentIdentityUses.map(item=>catalog.get(item.canonical.toLocaleLowerCase())||item).filter(item=>identityOptionMatches(item,query))}
-function rememberIdentityUsed(canonical,family){let value=String(canonical||'').trim();if(!value)return;recentIdentityUses=[{canonical:value,family:family||'review'},...recentIdentityUses.filter(item=>item.canonical.toLocaleLowerCase()!==value.toLocaleLowerCase())].slice(0,12);try{localStorage.setItem(RECENT_IDENTITY_STORAGE_KEY,JSON.stringify(recentIdentityUses))}catch(_error){}renderIdentityOptions();syncModalIdentityOptions()}
+function rememberIdentityUsed(canonical,family){let value=String(canonical||'').trim();if(!value)return;recentIdentityUses=[{canonical:value,family:family||'review'},...recentIdentityUses.filter(item=>item.canonical.toLocaleLowerCase()!==value.toLocaleLowerCase())].slice(0,20);try{localStorage.setItem(RECENT_IDENTITY_STORAGE_KEY,JSON.stringify(recentIdentityUses))}catch(_error){}persistRecentChoice('identity',value,family||'review');renderIdentityOptions();syncModalIdentityOptions()}
+async function restoreRecentIdentityUses(){let local=[...recentIdentityUses];try{let response=await fetch('/api/recent-choices'),data=await response.json(),remote=Array.isArray(data.identities)?data.identities:[];if(remote.length){recentIdentityUses=remote}else if(local.length){recentIdentityUses=local;for(const item of local.slice().reverse())await fetch('/api/recent-choices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'identity',canonical:item.canonical,family:item.family||'review'})})}try{localStorage.setItem(RECENT_IDENTITY_STORAGE_KEY,JSON.stringify(recentIdentityUses))}catch(_error){}renderIdentityOptions();syncModalIdentityOptions()}catch(_error){}}
+restoreRecentIdentityUses();
 async function postNewIdentityWithPrompt(endpoint,body){let payload={...body};while(true){let response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();if(response.status!==409||!data.collision)return{response,data,payload};let current=payload.canonical||payload.identity||'',replacement=window.prompt(`${data.error||'That identity name already exists.'}\nEnter a different identity name:`,current);if(replacement===null)return{response,data,payload,cancelled:true};replacement=replacement.trim();if(!replacement){window.alert('Enter a different identity name to continue.');continue}if(Object.hasOwn(payload,'canonical'))payload.canonical=replacement;if(Object.hasOwn(payload,'identity'))payload.identity=replacement}}
-async function loadIdentityOptions(selectedIdentity){let select=document.querySelector('#identity');if(!select)return;selectedIdentityValue=selectedIdentity;try{identityOptions=await fetch('/api/identities?scope=canonical').then(r=>r.json());renderIdentityOptions()}catch(error){select.replaceChildren(new Option('Unable to load identities',''))}}
+async function loadIdentityOptions(selectedIdentity){let select=document.querySelector('#identity');selectedIdentityValue=selectedIdentity;try{identityOptions=await fetch('/api/identities?scope=canonical').then(r=>r.json());if(select)renderIdentityOptions();syncModalIdentityOptions()}catch(error){if(select)select.replaceChildren(new Option('Unable to load identities',''));throw error}}
 function renderIdentityOptions(){let select=document.querySelector('#identity');if(!select)return;let filter=(document.querySelector('#identityFilter')?.value||'').trim().toLocaleLowerCase(),typed=(document.querySelector('#newIdentity')?.value||'').trim(),typedKey=typed.toLocaleLowerCase();let recent=matchingRecentIdentityOptions(filter);let exact=identityOptions.find(item=>item.canonical?.toLocaleLowerCase()===typedKey)||(!typed?identityOptions.find(item=>item.canonical?.toLocaleLowerCase()===filter):null);let recentKeys=new Set(recent.map(item=>String(item.canonical).toLocaleLowerCase()));if(exact)recentKeys.add(exact.canonical.toLocaleLowerCase());let grouped={};for(let item of identityOptions){let value=item.canonical||'';if(identityOptionMatches(item,filter)&&!recentKeys.has(value.toLocaleLowerCase()))(grouped[item.family||'other']??=[]).push(value)}select.replaceChildren(new Option('Choose an identity',''));if(typed){let value=exact?.canonical||typed;select.append(new Option(exact?value:`Create new identity: ${typed}`,value,true,true))}else if(exact)select.append(new Option(exact.canonical,exact.canonical,exact.canonical===selectedIdentityValue,exact.canonical===selectedIdentityValue));if(recent.length){let group=document.createElement('optgroup');group.label='Recently used';for(let item of recent){let value=item.canonical;group.append(new Option(value,value,value===selectedIdentityValue,value===selectedIdentityValue))}select.append(group)}let order=['manual','metadaily','redditdaily','reddit_follow','reddit_subreddit','pscrape','review','other'];order=[...new Set([...order,...Object.keys(grouped).sort()])];for(let family of order){let values=[...new Set(grouped[family]||[])].sort((a,b)=>a.localeCompare(b));if(!values.length)continue;let group=document.createElement('optgroup');group.label=family==='reddit_subreddit'?'Subreddits':family==='reddit_follow'?'Reddit accounts':family==='redditdaily'?'Redditdaily':family==='metadaily'?'Metadaily':family[0].toUpperCase()+family.slice(1);for(let value of values)group.append(new Option(value,value,value===selectedIdentityValue,value===selectedIdentityValue));select.append(group)}}
+function renderRecentIdentityShortlist(){let list=document.querySelector('#recentIdentityList');if(!list)return;let query=(document.querySelector('#identityFilter')?.value||'').trim().toLocaleLowerCase(),options=matchingRecentIdentityOptions(query),selected=document.querySelector('#identity')?.value||'';list.replaceChildren();list.hidden=!options.length;if(!options.length)return;let label=document.createElement('span');label.textContent='Recently used';list.append(label);for(let item of options){let button=document.createElement('button');button.type='button';button.textContent=item.canonical;button.title=`Use ${item.canonical} as the target identity`;button.setAttribute('aria-pressed',String(item.canonical.toLocaleLowerCase()===selected.toLocaleLowerCase()));button.onclick=()=>{let picker=document.querySelector('#identity'),family=document.querySelector('#family'),typed=document.querySelector('#newIdentity');if(typed)typed.value='';renderIdentityOptions();if(picker&&!Array.from(picker.options).some(option=>option.value===item.canonical))picker.add(new Option(item.canonical,item.canonical));if(picker)picker.value=item.canonical;if(family&&Array.from(family.options).some(option=>option.value===item.family))family.value=item.family;selectedIdentityValue=item.canonical;renderRecentIdentityShortlist()};list.append(button)}}
+const renderIdentityOptionsWithRecentShortlist=renderIdentityOptions;renderIdentityOptions=function(){renderIdentityOptionsWithRecentShortlist();renderRecentIdentityShortlist()};
 function filterIdentityOptions(){renderIdentityOptions()}
 document.addEventListener('input',event=>{if(event.target?.id==='newIdentity')renderIdentityOptions()});document.addEventListener('change',event=>{if(event.target?.id==='identity')selectedIdentityValue=event.target.value});
 async function save(e){e.preventDefault();let chosenIdentity=document.querySelector('#newIdentity')?.value.trim()||identity.value.trim();if(!chosenIdentity){status.textContent='Choose an identity or enter a new identity name';return}let r=await fetch('/api/decisions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cluster_id:selected,identity:chosenIdentity,family:family.value,aliases:aliases.value.split('\n'),notes:notes.value})});let d=await r.json();status.textContent=r.ok?'Saved decision for '+d.count+' files':d.error;if(r.ok){let x=clusters.find(x=>x.cluster_id===selected);x.decision=d;renderList()}}
@@ -2852,7 +3650,7 @@ const statusObserver=new MutationObserver(()=>{let form=document.querySelector('
 statusObserver.observe(document.querySelector('#detail'),{childList:true});
 const memberObserver=new MutationObserver(()=>{let grid=document.querySelector('#detail .grid');if(!grid||document.querySelector('#memberTools'))return;let tools=document.createElement('div');tools.id='memberTools';tools.className='meta';tools.innerHTML='<b>Cluster membership</b><br><select id="targetCluster">'+clusters.map(c=>'<option value="'+c.cluster_id+'">'+esc(c.title)+' ('+c.count+')</option>').join('')+'</select><button onclick="updateMember(\'add\')">Move selected image</button><button onclick="updateMember(\'remove\')">Remove selected image</button><p class="muted">Click an image to preview it; use the checkbox to select it for assignment.</p>';document.querySelector('#detail').insertBefore(tools,grid);grid.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>{window.memberPath=new URL(a.href).searchParams.get('path');document.querySelector('#memberTools p').textContent='Selected: '+window.memberPath}));});
 memberObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
-const imageAssignObserver=new MutationObserver(()=>{let grid=document.querySelector('#detail .grid');if(!grid||document.querySelector('#imageAssignTools'))return;let tools=document.createElement('div');tools.id='imageAssignTools';tools.className='meta';tools.innerHTML='<b>Selected image assignment</b><br><button type="button" onclick="selectAllImages()">Select all</button><button type="button" onclick="selectNoImages()">Select none</button><button type="button" id="hideConfirmedLabel" onclick="toggleHideConfirmed()">Hide confirmed</button><button type="button" onclick="assignSelectedImages()">Assign selected…</button><button type="button" onclick="createIdentity()">Save typed identity as new</button><button type="button" onclick="undoLastMove()">Undo last move</button><p class="muted">Confirmed assignments can be hidden from the grid; assignments still remain stored.</p>';document.querySelector('#detail').insertBefore(tools,grid);window.setTimeout(updateAssignmentLabels,0)});
+const imageAssignObserver=new MutationObserver(()=>{let grid=document.querySelector('#detail .grid');if(!grid||document.querySelector('#imageAssignTools'))return;let tools=document.createElement('div');tools.id='imageAssignTools';tools.className='meta';tools.innerHTML='<b>Selected image assignment</b><div class="cluster-selection-actions" role="group" aria-label="Select cluster images"><button type="button" onclick="selectAllImages()">Select all</button><button type="button" onclick="selectNoImages()">Select none</button><button type="button" id="hideConfirmedLabel" onclick="toggleHideConfirmed()">Hide confirmed</button></div><div class="cluster-primary-actions" role="group" aria-label="Assign selected images"><button type="button" class="approve" onclick="assignSelectedImages()">Assign selected and move</button><button type="button" class="undo-action" onclick="undoLastMove()">Undo last action</button></div><details class="cluster-more-actions"><summary>More controls</summary><button type="button" onclick="createIdentity()">Save typed identity as new</button></details><p class="muted">Confirmed assignments can be hidden from the grid; assignments still remain stored.</p>';document.querySelector('#detail').insertBefore(tools,grid);window.setTimeout(updateAssignmentLabels,0)});
 imageAssignObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
 const mediaObserver=new MutationObserver(()=>{document.querySelectorAll('#detail .grid a').forEach(a=>{let path=new URL(a.href).searchParams.get('path')||'';let node=a.querySelector('img');let isVideo=path.toLowerCase().endsWith('.mp4')||path.toLowerCase().endsWith('.mov');let hideUnavailable=media=>{media.onerror=()=>{media.closest('.media-tile')?.remove()}};if(isVideo&&node&&!a.querySelector('video')){let video=document.createElement('video');video.controls=true;video.preload='metadata';video.muted=true;video.setAttribute('aria-label','Video preview');video.src=a.href;hideUnavailable(video);node.replaceWith(video)}if(node&&!node.dataset.errorBound){node.dataset.errorBound='1';node.alt='Preview of '+path;hideUnavailable(node)}})});
 mediaObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
@@ -2869,13 +3667,13 @@ function showUndoOption(message,moveId=null,target='#imageAssignTools p'){let st
 async function undoLastMove(){let moveId=lastMoveId;if(!moveId){let r=await fetch('/api/moves');let d=await r.json();moveId=d.operations?.slice().reverse().find(x=>!x.undone)?.id||''}if(!moveId){alert('No reversible move found');return}if(!confirm('Undo the last confirmed move?'))return;let r=await fetch('/api/moves/'+encodeURIComponent(moveId)+'/undo',{method:'POST'});let d=await r.json();if(!r.ok){alert(d.error||'Undo failed');return}lastMoveId=null;let status=document.querySelector('#imageAssignTools p');if(status)status.textContent='Undid '+d.restored.length+' move(s)';if(selected)await select(selected)}
 async function updateMember(action){if(!window.memberPath){alert('Select an image first');return}let body={path:window.memberPath,action};if(action==='add')body.target_cluster_id=document.querySelector('#targetCluster').value||selected;let r=await fetch('/api/clusters/'+selected+'/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let d=await r.json();if(!r.ok){alert(d.error||'Membership update failed');return}select(selected)}
 let loadGeneration=0;
-async function loadClusterImages(){let grid=document.querySelector('#detail .grid');if(!grid||!selected)return;let generation=++loadGeneration;grid.dataset.loaded='0';grid.innerHTML='<p class=\"muted\">Loading all cluster images…</p>';try{let response=await fetch('/api/clusters/'+selected,{headers:{Accept:'application/json'}});let x=await response.json();if(!response.ok)throw new Error(x.error||`Request failed (${response.status})`);if(generation!==loadGeneration)return;currentClusterImageDecisions=x.image_decisions||{};currentClusterAssignment=x.decision||null;let paths=Array.isArray(x.paths)?x.paths:[];grid.innerHTML='';for(let offset=0;offset<paths.length;offset+=100){if(generation!==loadGeneration)return;grid.insertAdjacentHTML('beforeend',paths.slice(offset,offset+100).map(path=>mediaTile(path,currentClusterImageDecisions[path]||currentClusterAssignment)).join(''));grid.dataset.loaded=String(Math.min(offset+100,paths.length));await new Promise(requestAnimationFrame)}if(!paths.length)grid.innerHTML='<p class=\"muted\">No images in this cluster.</p>'}catch(error){if(generation===loadGeneration){grid.innerHTML=`<p role=\"alert\">${esc(error.message)} <button type=\"button\" onclick=\"loadClusterImages()\">Retry</button></p>`}}}
+async function loadClusterImages(){let grid=document.querySelector('#detail .grid');if(!grid||!selected)return;let generation=++loadGeneration;grid.dataset.loaded='0';grid.innerHTML='<p class=\"muted\">Loading all cluster images…</p>';try{let x=pendingClusterDetail?.id===selected?pendingClusterDetail.data:null;pendingClusterDetail=null;if(!x){let response=await fetch('/api/clusters/'+selected,{headers:{Accept:'application/json'}});x=await response.json();if(!response.ok)throw new Error(x.error||`Request failed (${response.status})`)}if(generation!==loadGeneration)return;currentClusterImageDecisions=x.image_decisions||{};currentClusterAssignment=x.decision||null;let paths=Array.isArray(x.paths)?x.paths:[];grid.innerHTML='';for(let offset=0;offset<paths.length;offset+=100){if(generation!==loadGeneration)return;grid.insertAdjacentHTML('beforeend',paths.slice(offset,offset+100).map(path=>mediaTile(path,currentClusterImageDecisions[path]||currentClusterAssignment)).join(''));grid.dataset.loaded=String(Math.min(offset+100,paths.length));await new Promise(requestAnimationFrame)}if(!paths.length)grid.innerHTML='<p class=\"muted\">No images in this cluster.</p>'}catch(error){if(generation===loadGeneration){grid.innerHTML=`<p role=\"alert\">${esc(error.message)} <button type=\"button\" onclick=\"loadClusterImages()\">Retry</button></p>`}}}
 const clusterImageObserver=new MutationObserver(()=>{/* intentionally no auto load-all; samples use data-loaded=sample until Load all */});
 clusterImageObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
 let lastDetailSelection=null;
 const selectionViewObserver=new MutationObserver(()=>{if(window.innerWidth<=700&&selected&&selected!==lastDetailSelection&&document.querySelector('#detail .grid')){lastDetailSelection=selected;document.querySelector('#detail').scrollIntoView({behavior:'smooth',block:'start'})}});
 selectionViewObserver.observe(document.querySelector('#detail'),{childList:true,subtree:true});
-async function loadPage(reset){let generation=++loadGeneration;if(reset){page=1;clusters=[];document.querySelector('#list').textContent='Loading…'}let q=encodeURIComponent(document.querySelector('#filter').value);try{let r=await fetch(`/api/clusters?page=${page}&page_size=50&q=${q}`,{headers:{Accept:'application/json'}});let c=await r.json();if(!r.ok)throw new Error(c.error||`Request failed (${r.status})`);if(generation!==loadGeneration)return;clusters=reset?c.clusters:clusters.concat(c.clusters);hasNext=c.has_next;document.querySelector('#summary').textContent=`${c.total} matching clusters · loaded ${clusters.length}`;let next=document.querySelector('#nextPage');next.disabled=!hasNext;next.textContent=hasNext?'Next page':'No more pages';renderList();if(reset){page=2;document.querySelector('#detail').innerHTML='<h2>Select a cluster</h2><p class="muted">Choose a cluster from the list. Large clusters show samples first — use Load all only when needed.</p>'}else if(!reset&&hasNext)page++}catch(error){if(generation!==loadGeneration)return;document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)} <button type="button" onclick="loadPage(${reset})">Retry</button></p>`}}
+async function loadPage(reset){let generation=++loadGeneration;if(reset){page=1;clusters=[];document.querySelector('#list').textContent='Loading…'}let q=encodeURIComponent(document.querySelector('#filter').value);try{let r=await fetch(`/api/clusters?page=${page}&page_size=50&q=${q}`,{headers:{Accept:'application/json'}});let c=await r.json();if(!r.ok)throw new Error(c.error||`Request failed (${r.status})`);if(generation!==loadGeneration)return;for(const cluster of c.clusters||[])manualGroupMembershipsByPath={...manualGroupMembershipsByPath,...(cluster.manual_groups_by_path||{})};clusters=reset?c.clusters:clusters.concat(c.clusters);hasNext=c.has_next;document.querySelector('#summary').textContent=`${c.total} matching clusters · loaded ${clusters.length}`;let next=document.querySelector('#nextPage');next.disabled=!hasNext;next.textContent=hasNext?'Next page':'No more pages';renderList();if(reset){page=2;document.querySelector('#detail').innerHTML='<h2>Select a cluster</h2><p class="muted">Choose a cluster from the list. Large clusters show samples first — use Load all only when needed.</p>'}else if(!reset&&hasNext)page++}catch(error){if(generation!==loadGeneration)return;document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)} <button type="button" onclick="loadPage(${reset})">Retry</button></p>`}}
   async function init(){try{let r=await fetch('/api/summary',{headers:{Accept:'application/json'}});let a=await r.json();if(!r.ok)throw new Error(a.error||`Request failed (${r.status})`);applyRuntimeState(a);renderSystemStatus(a);document.querySelector('#summary').textContent=`${a.clusters} clusters · ${a.decisions} saved decisions`;await loadPage(true)}catch(error){document.querySelector('#summary').innerHTML=`<span role="alert">${esc(error.message)}</span>`;document.querySelector('#list').innerHTML='<button type="button" onclick="init()">Retry loading</button>'}}
 window.addEventListener('unhandledrejection',event=>{let detail=document.querySelector('#detail');if(detail)detail.innerHTML=`<p role="alert">${esc(event.reason?.message||'The request failed.')} <button type="button" onclick="select(selected)">Retry</button></p>`});
 </script></body></html>"""
@@ -2941,13 +3739,13 @@ HTML_PAGE = HTML_PAGE.replace(
 IDENTITY_UI_SCRIPT = r"""
 let viewMode='clusters', identityGroups=[], selectedIdentity=null;
 const loadClustersPage=loadPage;
-async function loadIdentityGroups(){let r=await fetch('/api/identity-groups?include_disk=1',{headers:{Accept:'application/json'}});let data=await r.json();if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);identityGroups=data;return data}
+async function loadIdentityGroups(){let r=await fetch('/api/identity-groups?include_disk=1',{headers:{Accept:'application/json'}});let data=await r.json();if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);identityGroups=data;for(const group of data)manualGroupMembershipsByPath={...manualGroupMembershipsByPath,...(group.manual_groups_by_path||{})};return data}
 async function refreshIdentities(){let button=document.querySelector('#refreshIdentities');if(button)button.disabled=true;try{await loadIdentityGroups();if(viewMode==='identities')renderIdentityList();else document.querySelector('#summary').textContent=`${identityGroups.length} identities loaded`}catch(error){if(viewMode==='identities')document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)}</p>`}finally{if(button)button.disabled=false}}
 function setActiveView(){document.querySelector('#identityTab')?.classList.toggle('active',viewMode==='identities');document.querySelector('#clusterTab')?.classList.toggle('active',viewMode==='clusters');let next=document.querySelector('#nextPage');if(next)next.style.display=viewMode==='clusters'?'block':'none';let filter=document.querySelector('#filter');if(filter)filter.placeholder=viewMode==='identities'?'Search identities':'Filter clusters';let label=document.querySelector('label[for="filter"]');if(label)label.textContent=viewMode==='identities'?'Search identities':'Search clusters'}
 async function showView(mode){viewMode=mode;setActiveView();document.querySelector('#filter').value='';selected=null;if(mode==='identities'){document.querySelector('#list').textContent='Scanning identity folders…';document.querySelector('#summary').textContent='Loading identity media from disk…';document.querySelector('#detail').innerHTML='<p class="muted">Scanning sorted identity folders (a few seconds)…</p>';try{await loadIdentityGroups();renderIdentityList()}catch(error){document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)} <button type="button" onclick="showView('identities')">Retry</button></p>`}return}document.querySelector('#list').textContent='Loading clusters…';await loadClustersPage(true)}
 window.picorgNavigate=async function(mode){try{return await window.showView(mode)}catch(error){let detail=document.querySelector('#detail');if(detail)detail.innerHTML=`<p role="alert">Unable to open ${esc(mode)}: ${esc(error?.message||error)} <button type="button" onclick="window.picorgNavigate('${esc(mode)}')">Retry</button></p>`;return null}};
 function isCuratedIdentity(g){let hidden=['reddit_follow','reddit_subreddit','reddit_friends','pscrape','imdb'];return !hidden.includes(g.family)&&(!g.generic||g.family==='review')&&(g.count>0||['manual','review','metadaily','redditdaily'].includes(g.family))}
-async function refreshVisibleClusters(){if(viewMode!=='clusters')return;let q=encodeURIComponent(document.querySelector('#filter').value);try{let r=await fetch(`/api/clusters?page=1&page_size=50&mode=${clusterMode}&hide_confirmed=${hideConfirmed?'1':'0'}&q=${q}`,{headers:{Accept:'application/json'}});let c=await r.json();if(!r.ok)throw new Error(c.error||`Request failed (${r.status})`);clusters=c.clusters;page=2;hasNext=c.has_next;document.querySelector('#summary').textContent=`${c.total} ${clusterMode==='face'?'face':''} matching clusters · loaded ${clusters.length}`;renderList()}catch(error){document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)}</p>`}}
+async function refreshVisibleClusters(){if(viewMode!=='clusters')return;let q=encodeURIComponent(document.querySelector('#filter').value);try{let r=await fetch(`/api/clusters?page=1&page_size=50&mode=${clusterMode}&hide_confirmed=${hideConfirmed?'1':'0'}&q=${q}`,{headers:{Accept:'application/json'}});let c=await r.json();if(!r.ok)throw new Error(c.error||`Request failed (${r.status})`);clusters=c.clusters;for(const cluster of clusters)manualGroupMembershipsByPath={...manualGroupMembershipsByPath,...(cluster.manual_groups_by_path||{})};page=2;hasNext=c.has_next;document.querySelector('#summary').textContent=`${c.total} ${clusterMode==='face'?'face':''} matching clusters · loaded ${clusters.length}`;renderList()}catch(error){document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)}</p>`}}
 function renderIdentityList(){let q=(document.querySelector('#filter').value||'').trim().toLowerCase();let familyOrder={manual:0,review:1,metadaily:2,redditdaily:3};let visible=identityGroups.filter(g=>isCuratedIdentity(g)&&(g.identity+' '+(g.aliases||[]).join(' ')).toLowerCase().includes(q)).sort((a,b)=>((b.count||0)-(a.count||0))||((familyOrder[a.family]??9)-(familyOrder[b.family]??9))||a.identity.localeCompare(b.identity));document.querySelector('#list').className='identity-grid';document.querySelector('#summary').textContent=`${visible.length} identities · ${visible.reduce((n,g)=>n+g.count,0)} assigned media`;document.querySelector('#list').innerHTML=visible.map(g=>{let encoded=encodeURIComponent(g.identity);return `<button type="button" class="identity-card ${selectedIdentity===g.identity?'active':''}" onclick="selectIdentity(decodeURIComponent('${encoded}'))"><span class="identity-family">${esc(g.family||'review')}</span><b>${esc(g.identity)}</b><small>${g.count} media · ${g.confirmed} approved · ${g.pending} pending · ${g.rejected} rejected</small></button>`}).join('')||'<p class="muted">No identities match this search.</p>'}
 async function selectIdentity(identity){selectedIdentity=identity;renderIdentityList();let g=identityGroups.find(item=>item.identity===identity);if(!g){document.querySelector('#detail').innerHTML='<p class="muted">Identity not found.</p>';return}currentClusterImageDecisions={};currentClusterAssignment=null;currentIdentityAssignment={identity:g.identity,family:g.family||'review',status:'pending'};let images=g.sample_paths.map(path=>mediaTile(path,currentIdentityAssignment)).join('');document.querySelector('#detail').innerHTML=`<h2>${esc(g.identity)}</h2><div class="meta"><b>${g.count} assigned media</b><br>Family: ${esc(g.family||'review')}<br>Approved: ${g.confirmed} · Pending: ${g.pending} · Rejected: ${g.rejected}</div><div class="identity-toolbar"><button type="button" onclick="selectAllImages()">Select all</button><button type="button" onclick="selectNoImages()">Select none</button><button type="button" class="approve" onclick="reviewIdentitySelection('confirmed')">Approve selected</button><button type="button" class="reject" onclick="reviewIdentitySelection('rejected')">Reject selected</button></div><p class="muted">Approve only when the face evidence supports this identity. Approved files are moved into the identity folder.</p><div class="grid">${images||'<p class="muted">No assigned media yet.</p>'}</div>`}
 async function reviewIdentitySelection(status){let paths=[...document.querySelectorAll('#detail .imageSelect:checked')].map(x=>x.dataset.path);if(!paths.length||!selectedIdentity){alert('Select at least one image first');return}let g=identityGroups.find(item=>item.identity===selectedIdentity)||{};let r=await fetch(assignmentEndpoint(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths,identity:selectedIdentity,family:g.family||'review',status,notes:'Reviewed from identity view'})});let d=await r.json();if(!r.ok){alert(d.error||'Unable to save review');return}rememberIdentityUsed(selectedIdentity,g.family||'review');lastMoveId=d.move_id||lastMoveId;if(d.queued){alert('Queued '+d.queued+' assignment(s); they will be applied after the rebuild.')}await loadIdentityGroups();renderIdentityList();await selectIdentity(selectedIdentity);let message=d.queued?'Queued '+d.queued+' assignment(s) for after the rebuild':status==='confirmed'?`Approved ${d.saved} image(s); moved ${(d.moved||[]).length}${(d.errors||[]).length?'; '+d.errors.length+' move error(s)':''} for ${selectedIdentity}`:'Reviewed '+d.saved+' image(s) for '+selectedIdentity;showUndoOption(message,d.move_id)}
@@ -2977,15 +3775,16 @@ HTML_PAGE = HTML_PAGE.replace('</script>', IDENTITY_UI_SCRIPT + '</script>', 1)
 
 
 MODAL_UI_SCRIPT = r"""
-let modalPaths=[], modalIndex=0, deletedModalPaths=new Set(), modalLastIdentity=null, modalUndoMoveId=null, modalSessionId=0, modalActionSequence=0, modalUndoSequence=0, modalPendingAssignments=new Map();
+let modalPaths=[], modalIndex=0, deletedModalPaths=new Set(), modalLastIdentity=null, modalUndoMoveId=null, modalSessionId=0, modalActionSequence=0, modalUndoSequence=0, modalPendingAssignments=new Map(), modalMoreToolsOpen=false;
 function gridMediaPaths(){return [...document.querySelectorAll('#detail .media-tile .imageSelect')].map(input=>input.dataset.path).filter(Boolean)}
 function modalMediaType(path){return /\.(mp4|mov|webm|m4v)$/i.test(path)?'video':'img'}
 function syncModalIdentityOptions(){let select=document.querySelector('#modalIdentity');if(!select)return;let current=select.value||document.querySelector('#identity')?.value||currentIdentityAssignment?.identity||selectedIdentity||'';let query=(document.querySelector('#modalIdentitySearch')?.value||'').trim().toLocaleLowerCase();let grouped={};for(let item of (identityOptions||[])){let value=item.canonical||'';if(value&&(!query||value.toLocaleLowerCase().includes(query)||(item.aliases||[]).some(alias=>String(alias).toLocaleLowerCase().includes(query))))(grouped[item.family||'other']??=[]).push(value)}if(current&&!Object.values(grouped).flat().includes(current)&&(!query||current.toLocaleLowerCase().includes(query)))(grouped[currentIdentityAssignment?.family||'review']??=[]).push(current);select.replaceChildren(new Option(query?'No matching identity':'Choose an identity',''));let empty=select.options[0];empty.disabled=Boolean(query);let order=['manual','review','metadaily','redditdaily','reddit_follow','reddit_subreddit','pscrape','other'];order=[...new Set([...order,...Object.keys(grouped).sort()])];for(let family of order){let values=[...new Set(grouped[family]||[])].sort((a,b)=>a.localeCompare(b));if(!values.length)continue;let group=document.createElement('optgroup');group.label=family==='reddit_subreddit'?'Subreddits':family==='reddit_follow'?'Reddit accounts':family==='redditdaily'?'Redditdaily':family==='metadaily'?'Metadaily':family[0].toUpperCase()+family.slice(1);for(let value of values)group.append(new Option(value,value,value===current,value===current));select.append(group)}}
 function closeMediaModal(){let modal=document.querySelector('#mediaModal');modal.hidden=true;document.querySelector('#mediaModalContent').replaceChildren()}
-function renderMediaModal(){let modal=document.querySelector('#mediaModal'),content=document.querySelector('#mediaModalContent');if(!modal||!content)return;let path=modalPaths[modalIndex];if(!path){closeMediaModal();return}content.replaceChildren();let queuedPath=currentClusterImageDecisions[path]?.status==='queued';let toolbar=document.createElement('div');toolbar.className='media-modal-toolbar';let previous=document.createElement('button');previous.type='button';previous.textContent='Previous';previous.disabled=modalIndex<=0;previous.onclick=()=>{if(modalIndex>0){modalIndex--;renderMediaModal()}};let next=document.createElement('button');next.type='button';next.textContent='Next';next.disabled=modalIndex>=modalPaths.length-1;next.onclick=()=>{if(modalIndex<modalPaths.length-1){modalIndex++;renderMediaModal()}};let search=document.createElement('input');search.id='modalIdentitySearch';search.placeholder='Type to find identity';search.setAttribute('aria-label','Search identities');search.oninput=syncModalIdentityOptions;let picker=document.createElement('select');picker.id='modalIdentity';picker.setAttribute('aria-label','Identity for current image');picker.onchange=()=>{let detail=document.querySelector('#identity');if(detail)detail.value=picker.value};let family=document.createElement('select');family.id='modalFamily';family.setAttribute('aria-label','Family for current image');['manual','review','metadaily','redditdaily','reddit_follow','reddit_subreddit','pscrape'].forEach(value=>family.append(new Option(value,value,value===(document.querySelector('#family')?.value||currentIdentityAssignment?.family||'review'))));let newIdentity=document.createElement('input');newIdentity.id='modalNewIdentity';newIdentity.placeholder='New identity (optional)';newIdentity.setAttribute('aria-label','New identity for current image');let lens=document.createElement('button');lens.type='button';lens.textContent='Google Lens';lens.title='Open this image in Google Lens';lens.onclick=()=>openGoogleLens(path);let download=document.createElement('button');download.type='button';download.textContent='Download for Lens';download.title='Download locally, then upload to Google Lens';download.onclick=()=>downloadForLens(path);let useLast=document.createElement('button');useLast.type='button';useLast.textContent='Use last identity';useLast.disabled=!modalLastIdentity;useLast.onclick=useLastModalIdentity;let undo=document.createElement('button');undo.type='button';undo.textContent='Undo last move';undo.className='modal-undo';undo.disabled=!modalUndoMoveId||[...modalPendingAssignments.values()].some(sequence=>sequence>modalUndoSequence);undo.onclick=undoModalMove;let assign=document.createElement('button');assign.type='button';assign.className='approve';assign.textContent='Assign & confirm';assign.onclick=()=>assignModalImage();let remove=document.createElement('button');remove.type='button';remove.className='reject delete-media';remove.textContent='Delete permanently';remove.title='Permanently delete this file';remove.onclick=()=>deleteModalImage();toolbar.append(previous,next,search,picker,family,useLast,undo,newIdentity,lens,download,assign,remove);content.append(toolbar);let status=document.createElement('div');status.className='media-modal-status';status.textContent=deletedModalPaths.has(path)?'Deleted permanently — preview retained for review':queuedPath?'Assignment queued — moving in background':`Image ${modalIndex+1} of ${modalPaths.length}`;content.append(status);let media=document.createElement(modalMediaType(path));media.alt='Full-size media preview';media.decoding='async';media.loading='lazy';if(media.tagName==='VIDEO'){media.controls=true;media.autoplay=true;media.muted=true;media.playsInline=true}media.onerror=()=>{status.textContent='Unable to preview this file'};let frame=document.createElement('div');frame.className='media-preview-frame';frame.append(media);if(deletedModalPaths.has(path)){let overlay=document.createElement('div');overlay.className='media-deleted-overlay';overlay.textContent='Deleted permanently';frame.append(overlay)}else if(queuedPath){let overlay=document.createElement('div');overlay.className='media-queued-overlay';overlay.textContent='Queued';frame.append(overlay)}content.append(frame);let caption=document.createElement('div');caption.className='media-modal-caption';caption.textContent=path;content.append(caption);syncModalIdentityOptions();updateAssignmentLabels();modal.hidden=false;assign.focus();window.setTimeout(()=>{if(media.isConnected&&!deletedModalPaths.has(path))media.src='/media?path='+encodeURIComponent(path)},0)}
+function renderMediaModal(){let modal=document.querySelector('#mediaModal'),content=document.querySelector('#mediaModalContent');if(!modal||!content)return;let path=modalPaths[modalIndex];if(!path){closeMediaModal();return}content.replaceChildren();let queuedPath=currentClusterImageDecisions[path]?.status==='queued';let toolbar=document.createElement('div');toolbar.className='media-modal-toolbar';let navigation=document.createElement('div');navigation.className='modal-control-group modal-navigation';navigation.setAttribute('role','group');navigation.setAttribute('aria-label','Image navigation');let identityTools=document.createElement('section');identityTools.className='modal-control-group modal-identity-tools';identityTools.setAttribute('aria-label','Identity assignment');let primaryActions=document.createElement('div');primaryActions.className='modal-control-group modal-primary-actions';primaryActions.setAttribute('role','group');primaryActions.setAttribute('aria-label','Assign and undo');let more=document.createElement('details');more.className='modal-more-tools';more.open=modalMoreToolsOpen;more.addEventListener('toggle',()=>{modalMoreToolsOpen=more.open});let moreLabel=document.createElement('summary');moreLabel.textContent='More tools';let moreActions=document.createElement('div');moreActions.className='modal-more-actions';let previous=document.createElement('button');previous.type='button';previous.textContent='Previous';previous.disabled=modalIndex<=0;previous.onclick=()=>{if(modalIndex>0){modalIndex--;renderMediaModal()}};let next=document.createElement('button');next.type='button';next.textContent='Next';next.disabled=modalIndex>=modalPaths.length-1;next.onclick=()=>{if(modalIndex<modalPaths.length-1){modalIndex++;renderMediaModal()}};let position=document.createElement('span');position.className='modal-position';position.setAttribute('aria-live','polite');position.textContent=`${modalIndex+1} of ${modalPaths.length}`;navigation.append(previous,position,next);let search=document.createElement('input');search.id='modalIdentitySearch';search.placeholder='Type to find identity';search.setAttribute('aria-label','Search identities');search.oninput=syncModalIdentityOptions;let picker=document.createElement('select');picker.id='modalIdentity';picker.setAttribute('aria-label','Identity for current image');picker.onchange=()=>{let detail=document.querySelector('#identity');if(detail)detail.value=picker.value};let family=document.createElement('select');family.id='modalFamily';family.setAttribute('aria-label','Family for current image');['manual','review','metadaily','redditdaily','reddit_follow','reddit_subreddit','pscrape'].forEach(value=>family.append(new Option(value,value,value===(document.querySelector('#family')?.value||currentIdentityAssignment?.family||'review'))));let newIdentity=document.createElement('input');newIdentity.id='modalNewIdentity';newIdentity.placeholder='New identity (optional)';newIdentity.setAttribute('aria-label','New identity for current image');let lens=document.createElement('button');lens.type='button';lens.textContent='Google Lens';lens.title='Open this image in Google Lens';lens.onclick=()=>openGoogleLens(path);let download=document.createElement('button');download.type='button';download.textContent='Download for Lens';download.title='Download locally, then upload to Google Lens';download.onclick=()=>downloadForLens(path);let useLast=document.createElement('button');useLast.type='button';useLast.textContent='Use last identity';useLast.disabled=!modalLastIdentity;useLast.onclick=useLastModalIdentity;let undo=document.createElement('button');undo.type='button';undo.textContent='Undo last action';undo.className='modal-undo';undo.disabled=!modalUndoMoveId||[...modalPendingAssignments.values()].some(sequence=>sequence>modalUndoSequence);undo.onclick=undoModalMove;let assign=document.createElement('button');assign.type='button';assign.className='approve';assign.textContent='Assign & move';assign.onclick=()=>assignModalImage();let remove=document.createElement('button');remove.type='button';remove.className='reject delete-media';remove.textContent='Delete permanently';remove.title='Permanently delete this file';remove.onclick=()=>deleteModalImage();identityTools.append(search,picker,family,newIdentity,useLast);primaryActions.append(assign);moreActions.append(undo,lens,download,remove);more.append(moreLabel,moreActions);toolbar.append(navigation,identityTools,primaryActions,more);content.append(toolbar);let status=document.createElement('div');status.className='media-modal-status';status.textContent=deletedModalPaths.has(path)?'Deleted permanently — preview retained for review':queuedPath?'Assignment queued — moving in background':`Image ${modalIndex+1} of ${modalPaths.length}`;content.append(status);let media=document.createElement(modalMediaType(path));media.alt='Full-size media preview';media.decoding='async';media.loading='lazy';if(media.tagName==='VIDEO'){media.controls=true;media.autoplay=true;media.muted=true;media.playsInline=true}media.onerror=()=>{status.textContent='Unable to preview this file'};let frame=document.createElement('div');frame.className='media-preview-frame';frame.append(media);if(deletedModalPaths.has(path)){let overlay=document.createElement('div');overlay.className='media-deleted-overlay';overlay.textContent='Deleted permanently';frame.append(overlay)}else if(queuedPath){let overlay=document.createElement('div');overlay.className='media-queued-overlay';overlay.textContent='Queued';frame.append(overlay)}content.append(frame);let caption=document.createElement('div');caption.className='media-modal-caption';caption.textContent=path;content.append(caption);syncModalIdentityOptions();updateAssignmentLabels();modal.hidden=false;assign.focus();window.setTimeout(()=>{if(media.isConnected&&!deletedModalPaths.has(path))media.src='/media?path='+encodeURIComponent(path)},0)}
 function downloadForLens(path){let link=document.createElement('a');link.href='/media?path='+encodeURIComponent(path);link.download=path.split('/').pop()||'picorg-image';link.rel='noreferrer';document.body.append(link);link.click();link.remove();let status=document.querySelector('.media-modal-status');if(status)status.textContent='Downloaded locally; upload the file to Google Lens.'}
 function openGoogleLens(path){if(!window.confirm('This may send the image to Google. Continue?'))return;let mediaUrl=new URL('/media?path='+encodeURIComponent(path),window.location.href).href;let lensUrl='https://lens.google.com/uploadbyurl?url='+encodeURIComponent(mediaUrl);window.open(lensUrl,'_blank','noopener,noreferrer');let status=document.querySelector('.media-modal-status');if(status)status.textContent='Opened Google Lens; LAN-only URLs may require manual upload.'}
-function openMediaModal(event,anchor){if(event.target.closest('.imageSelect'))return;event.preventDefault();let path=new URL(anchor.getAttribute('href'),location.href).searchParams.get('path')||'';let paths=gridMediaPaths();if(!paths.includes(path))paths=[path,...paths.filter(item=>item!==path)];modalPaths=paths;modalIndex=Math.max(0,modalPaths.indexOf(path));modalLastIdentity=null;modalUndoMoveId=null;modalSessionId++;modalActionSequence=0;modalUndoSequence=0;modalPendingAssignments.clear();renderMediaModal()}
+function openMediaModal(event,anchor,pathsOverride=null){if(event.target.closest('.imageSelect'))return;event.preventDefault();let path=new URL(anchor.getAttribute('href'),location.href).searchParams.get('path')||'';let paths=Array.isArray(pathsOverride)?[...new Set(pathsOverride.filter(Boolean))]:gridMediaPaths();if(!paths.includes(path))paths=[path,...paths];modalPaths=paths;modalIndex=Math.max(0,modalPaths.indexOf(path));modalLastIdentity=null;modalUndoMoveId=null;modalSessionId++;modalActionSequence=0;modalUndoSequence=0;modalPendingAssignments.clear();renderMediaModal()}
+window.openReviewModalForPaths=openMediaModal;
 function updateModalUndoControl(){let pendingNewer=[...modalPendingAssignments.values()].some(sequence=>sequence>modalUndoSequence),button=document.querySelector('.modal-undo');if(button)button.disabled=!modalUndoMoveId||pendingNewer;let modal=document.querySelector('#mediaModal'),status=document.querySelector('.media-modal-status');if(modal&&!modal.hidden&&!modalPaths.length&&status)status.textContent=modalPendingAssignments.size?'Batch complete — queued assignments still running.':'Assignment complete — no unassigned images remain in this cluster.'}
 function useLastModalIdentity(){if(!modalLastIdentity)return;let picker=document.querySelector('#modalIdentity'),family=document.querySelector('#modalFamily'),newIdentity=document.querySelector('#modalNewIdentity');if(picker&&!Array.from(picker.options).some(option=>option.value===modalLastIdentity.identity))picker.add(new Option(modalLastIdentity.identity,modalLastIdentity.identity));if(picker)picker.value=modalLastIdentity.identity;if(family)family.value=modalLastIdentity.family;if(newIdentity)newIdentity.value=''}
 async function undoModalMove(){if(!modalUndoMoveId)return;let result=await window.picorgUndoMove(modalUndoMoveId);if(!result)return;modalUndoMoveId=null;let paths=result.restored_paths||(result.restored||[]).map(item=>item.destination);for(let path of paths){if(!path)continue;currentClusterImageDecisions[path]={status:'pending'};if(!modalPaths.includes(path))modalPaths.unshift(path)}if(modalPaths.length){modalIndex=0;renderMediaModal()}}
@@ -3020,11 +3819,12 @@ async function assignModalImage(){
   if(hideConfirmed)tile?.remove();
   if(selected)await select(selected);
   showUndoOption('Moved image to '+identity,data.move_id);
+  if(viewMode==='manual-groups')await window.picorgRefreshManualGroupView?.();
   advanceModalPath(path)
  }catch(error){let status=document.querySelector('.media-modal-status');if(status)status.textContent=error.message;if(button)button.disabled=false}
 }
-function advanceModalPath(path){
- let position=modalPaths.indexOf(path);if(position>=0)modalPaths.splice(position,1);modalPaths=modalPaths.filter(item=>!['queued','confirmed'].includes(currentClusterImageDecisions[item]?.status));if(!modalPaths.length){if(modalUndoMoveId||modalPendingAssignments.size){let modal=document.querySelector('#mediaModal'),content=document.querySelector('#mediaModalContent'),status=document.createElement('div'),toolbar=document.createElement('div'),undo=document.createElement('button');status.className='media-modal-status';status.textContent=modalPendingAssignments.size?'Batch complete — queued assignments still running.':'Assignment complete — no unassigned images remain in this cluster.';toolbar.className='media-modal-toolbar';undo.type='button';undo.textContent='Undo last move';undo.className='modal-undo';undo.disabled=!modalUndoMoveId||[...modalPendingAssignments.values()].some(sequence=>sequence>modalUndoSequence);undo.onclick=undoModalMove;toolbar.append(undo);content.replaceChildren(status,toolbar);modal.hidden=false;return}closeMediaModal();showQueuedMoveStatus('Assignment complete — no unassigned images remain in this cluster.');return}if(modalIndex>=modalPaths.length)modalIndex=modalPaths.length-1;renderMediaModal();
+function advanceModalPath(path,completionMessage='Assignment complete — no unassigned images remain in this cluster.'){
+ let position=modalPaths.indexOf(path);if(position>=0)modalPaths.splice(position,1);if(viewMode!=='manual-groups')modalPaths=modalPaths.filter(item=>!['queued','confirmed'].includes(currentClusterImageDecisions[item]?.status));if(!modalPaths.length){if(viewMode==='clusters'||modalUndoMoveId||modalPendingAssignments.size){let modal=document.querySelector('#mediaModal'),content=document.querySelector('#mediaModalContent'),status=document.createElement('div'),toolbar=document.createElement('div'),undo=document.createElement('button');status.className='media-modal-status';status.textContent=modalPendingAssignments.size?'Batch complete — queued assignments still running.':completionMessage;toolbar.className='media-modal-toolbar';undo.type='button';undo.textContent='Undo last action';undo.className='modal-undo';undo.disabled=false;undo.onclick=undoLastMove;toolbar.append(undo);content.replaceChildren(status,toolbar);modal.hidden=false;return}closeMediaModal();showQueuedMoveStatus(completionMessage);return}if(modalIndex>=modalPaths.length)modalIndex=modalPaths.length-1;renderMediaModal();
 }
 async function waitForAssignment(assignmentId){
  for(let attempt=0;attempt<240;attempt++){
@@ -3064,6 +3864,7 @@ async function finishQueuedAssignment(path,assignmentId,item,actionSequence,sess
  if(item.status==='applied'){
   decision.status='confirmed';delete decision.error;
   showQueuedMoveStatus(`Move complete: ${path} was moved to ${item.identity||decision.identity}.`);
+  if(viewMode==='manual-groups')try{await window.picorgRefreshManualGroupView?.()}catch(error){console.error('Unable to refresh manual collection after queued assignment',error)}
   if(viewMode==='clusters'&&clusterId)try{await refreshQueuedMoveCluster(clusterId,path,assignmentId,decision)}catch(error){console.error('Unable to refresh cluster after queued move',error)}
  }else{
   decision.status=item.status;decision.error=item.error||`Assignment ${item.status}`;if(sessionId===modalSessionId&&!modalPaths.length){let status=document.querySelector('.media-modal-status');if(status)status.textContent=`Move ${item.status}: ${decision.error}`;}
@@ -3087,7 +3888,7 @@ function insertRecentIdentityGroup(select,query,current){let recent=matchingRece
 const originalRenderIdentityOptions=renderIdentityOptions;renderIdentityOptions=function(){originalRenderIdentityOptions();let select=document.querySelector('#identity');if(select)insertRecentIdentityGroup(select,(document.querySelector('#identityFilter')?.value||'').trim().toLocaleLowerCase(),selectedIdentityValue)};
 const originalSyncModalIdentityOptions=syncModalIdentityOptions;syncModalIdentityOptions=function(){originalSyncModalIdentityOptions();let select=document.querySelector('#modalIdentity');if(select)insertRecentIdentityGroup(select,(document.querySelector('#modalIdentitySearch')?.value||'').trim().toLocaleLowerCase(),select.value)};
  function renderModalRecentIdentityList(){let list=document.querySelector('#modalRecentIdentityList');if(!list)return;let query=(document.querySelector('#modalIdentitySearch')?.value||'').trim().toLocaleLowerCase(),options=matchingRecentIdentityOptions(query),selected=document.querySelector('#modalIdentity')?.value||'';list.replaceChildren();list.hidden=!options.length;if(options.length){let label=document.createElement('span');label.textContent='Recently used';list.append(label)}for(let item of options){let button=document.createElement('button');button.type='button';button.textContent=item.canonical;button.title=`Recently used · ${item.family||'review'} · click to assign and move`;button.setAttribute('aria-pressed',String(item.canonical.toLocaleLowerCase()===selected.toLocaleLowerCase()));button.onclick=async()=>{let picker=document.querySelector('#modalIdentity'),family=document.querySelector('#modalFamily'),typed=document.querySelector('#modalNewIdentity'),detailPicker=document.querySelector('#identity'),busyButtons=[...list.querySelectorAll('button')];busyButtons.forEach(button=>button.disabled=true);if(picker&&!Array.from(picker.options).some(option=>option.value===item.canonical))picker.add(new Option(item.canonical,item.canonical));if(picker)picker.value=item.canonical;if(family&&Array.from(family.options).some(option=>option.value===item.family))family.value=item.family;if(detailPicker)detailPicker.value=item.canonical;if(typed)typed.value='';if(modalLastIdentity&&item.canonical===modalLastIdentity.identity)modalLastIdentity={identity:item.canonical,family:item.family};try{await assignModalImage()}finally{if(list.isConnected)renderModalRecentIdentityList()}};list.append(button)}}
-const originalSyncModalWithRecent=syncModalIdentityOptions;syncModalIdentityOptions=function(){originalSyncModalWithRecent();let select=document.querySelector('#modalIdentity');if(select){let toolbar=select.closest('.media-modal-toolbar'),list=document.querySelector('#modalRecentIdentityList');if(toolbar&&!list){list=document.createElement('div');list.id='modalRecentIdentityList';list.className='modal-recent-identities';list.setAttribute('role','group');list.setAttribute('aria-label','Recently used identities');let label=document.createElement('span');label.textContent='Recently used';list.append(label);toolbar.insertBefore(list,select.nextSibling)}renderModalRecentIdentityList()}};
+const originalSyncModalWithRecent=syncModalIdentityOptions;syncModalIdentityOptions=function(){originalSyncModalWithRecent();let select=document.querySelector('#modalIdentity');if(select){let identityTools=select.closest('.modal-identity-tools'),list=document.querySelector('#modalRecentIdentityList');if(identityTools&&!list){list=document.createElement('div');list.id='modalRecentIdentityList';list.className='modal-recent-identities';list.setAttribute('role','group');list.setAttribute('aria-label','Recently used identities');let label=document.createElement('span');label.textContent='Recently used';list.append(label);identityTools.insertBefore(list,select.nextSibling)}renderModalRecentIdentityList()}};
 const originalLoadIdentityOptionsForModal=loadIdentityOptions;loadIdentityOptions=async function(selectedIdentity){let result=await originalLoadIdentityOptionsForModal(selectedIdentity);syncModalIdentityOptions();return result};
 const originalLoadClusterImagesForModal=loadClusterImages;loadClusterImages=async function(){let result=await originalLoadClusterImagesForModal();modalPaths=gridMediaPaths();return result};
 document.addEventListener('keydown',event=>{let modal=document.querySelector('#mediaModal');if(!modal||modal.hidden)return;if(event.key==='ArrowLeft'){event.preventDefault();if(modalIndex>0){modalIndex--;renderMediaModal()}}else if(event.key==='ArrowRight'){event.preventDefault();if(modalIndex<modalPaths.length-1){modalIndex++;renderMediaModal()}}});
@@ -3315,18 +4116,10 @@ UI_ENHANCEMENT_SCRIPT = r"""
     }
   };
 
-  // Cluster review is image-level by design: load the complete member list
-  // after a cluster is opened instead of making reviewers discover a second
-  // "Load all" action.  Keep the button as a retry/fallback if the request
-  // fails (for example while a source mount is temporarily unavailable).
+  // Replace the initial sample with the complete gallery after a cluster is
+  // opened. loadClusterImages renders in animation-frame batches.
   async function loadSelectedClusterImages(){
-    const button=document.querySelector('#loadAllImages');
-    if(!button)return;
-    button.disabled=true;
-    button.textContent='Loading all images…';
     await loadClusterImages();
-    const toolbar=button.closest('.identity-toolbar');
-    if(toolbar&&!document.querySelector('#detail [role="alert"]'))toolbar.remove();
   }
   select=async function(id){
     suppressClusterRerender=true;
@@ -3345,17 +4138,52 @@ UI_ENHANCEMENT_SCRIPT = r"""
   // existing writer remains authoritative; this wrapper only supplies the
   // missing identity and confirmation step.
   const originalAssignSelectedImages=assignSelectedImages;
-  function openNextUnassignedClusterImage(excludedPaths){
+  async function advanceClusterIfHandled(){
+    if(viewMode!=='clusters'||!selected)return false;
+    const completedId=selected,previousIds=visibleClusterIds(),previousIndex=previousIds.indexOf(completedId);
+    const known=clusters.find(item=>item.cluster_id===completedId);
+    if(!known?.title)return false;
+    try{
+      const query=new URLSearchParams({page:'1',page_size:'200',mode:clusterMode,hide_confirmed:hideConfirmed?'1':'0',q:known.title});
+      const response=await fetch(`/api/clusters?${query}`,{headers:{Accept:'application/json'}}),payload=await response.json();
+      if(!response.ok)throw new Error(payload.error||`Request failed (${response.status})`);
+      const current=(payload.clusters||[]).find(item=>item.cluster_id===completedId);
+      if(current){Object.assign(known,current);renderList()}
+      if(current&&Number(current.unassigned_count)>0)return false;
+    }catch(error){console.warn('Could not verify cluster completion before advancing',error);return false}
+    if(selected!==completedId||viewMode!=='clusters')return false;
+    await refreshVisibleClusters();
+    if(document.querySelector('#list [role="alert"]'))return false;
+    let ids=visibleClusterIds();
+    let target=previousIds.slice(Math.max(0,previousIndex+1)).find(id=>ids.includes(id));
+    if(!target&&ids.includes(completedId))target=ids[ids.indexOf(completedId)+1];
+    if(!target){const targetIndex=ids.includes(completedId)?ids.indexOf(completedId)+1:Math.max(previousIndex,0);while(hasNext&&ids.length<=targetIndex){const count=ids.length;await loadClustersPage(false);ids=visibleClusterIds();if(ids.length===count)break}target=ids[targetIndex]}
+    if(!target){closeMediaModal();showQueuedMoveStatus('Cluster handled — no more clusters remain in this view.');return true}
+    closeMediaModal();
+    await select(target);
+    return true;
+  }
+  window.advanceClusterIfHandled=advanceClusterIfHandled;
+  async function openNextUnassignedClusterImage(excludedPaths){
     if(viewMode!=='clusters'||!selected)return;
     const gridPaths=gridMediaPaths(),excluded=new Set(excludedPaths);
     const unfinished=path=>!['queued','confirmed'].includes(currentClusterImageDecisions[path]?.status);
     const failed=excludedPaths.filter(path=>gridPaths.includes(path)&&unfinished(path));
     const paths=[...new Set([...failed,...gridPaths.filter(path=>!excluded.has(path)&&unfinished(path))])];
-    if(!paths.length){closeMediaModal();showQueuedMoveStatus('Assignment complete — no unassigned images remain in this cluster.');return}
+    if(!paths.length){if(await advanceClusterIfHandled())return;closeMediaModal();showQueuedMoveStatus('Could not confirm that this cluster is complete. It remains selected for review.');return}
     modalPaths=paths;
     modalIndex=0;
     renderMediaModal();
   }
+  const originalAdvanceModalPath=advanceModalPath;
+  advanceModalPath=function(path,completionMessage){
+    originalAdvanceModalPath(path,completionMessage);
+    if(viewMode==='clusters'&&!modalPaths.length)window.setTimeout(async()=>{
+      if(await advanceClusterIfHandled())return;
+      const status=document.querySelector('.media-modal-status');
+      if(status)status.textContent='Could not confirm that this cluster is complete. It remains selected for review.';
+    },0);
+  };
   assignSelectedImages=async function(){
     const paths=[...document.querySelectorAll('#detail .imageSelect:checked')].map(input=>input.dataset.path).filter(Boolean);
     if(!paths.length){alert('Select at least one image first');return}
@@ -3378,18 +4206,18 @@ UI_ENHANCEMENT_SCRIPT = r"""
         identity=payload.canonical;
         rememberIdentityUsed(identity,family);lastMoveId=data.move_id||lastMoveId;
         showUndoOption(`Created ${identity}; moved ${(data.moved||[]).length} image(s)${(data.errors||[]).length?`; ${(data.errors||[]).length} move error(s)`:''}`,data.move_id);
-        await select(selected);openNextUnassignedClusterImage(paths);return {...data,paths};
+        await select(selected);await openNextUnassignedClusterImage(paths);return {...data,paths};
       }catch(error){showUndoOption(error.message);return}
     }
     const result=await originalAssignSelectedImages();
-    if(result?.paths?.length)openNextUnassignedClusterImage(result.paths);
+    if(result?.paths?.length)await openNextUnassignedClusterImage(result.paths);
     return result;
   };
   const originalConfirmImage=confirmImage;
   confirmImage=async function(event,path,identity,family){
     if(!window.confirm(`Confirm this image as “${identity}”?`))return;
     const result=await originalConfirmImage(event,path,identity,family);
-    if(result&&!result.needs_review)openNextUnassignedClusterImage([path]);
+    if(result&&!result.needs_review)await openNextUnassignedClusterImage([path]);
     return result;
   };
 
@@ -3487,11 +4315,12 @@ UI_ENHANCEMENT_SCRIPT = r"""
   selectNoImages=(function(original){return function(){original();updateSelectionSummary()}})(selectNoImages);
 
   function showRiskWarning(){
-    const detail=document.querySelector('#detail');if(!detail||detail.querySelector('.risk-warning')||!selected)return;
-    const item=clusters.find(cluster=>cluster.cluster_id===selected);if(!item?.requires_image_review)return;
-    const flags=(item.purity_flags||[]).map(flag=>flag.reason||flag.code||flag).filter(Boolean).join('; ');
-    const warning=document.createElement('div');warning.className='risk-warning';warning.setAttribute('role','alert');warning.textContent='Image-level review required — this cluster has purity risks'+(flags?': '+flags:'')+'. Do not bulk-confirm it.';
-    detail.querySelector('h2')?.after(warning);
+    const detail=document.querySelector('#detail');if(!detail||!selected)return;
+    const item=clusters.find(cluster=>cluster.cluster_id===selected);if(!item)return;
+    let evidence=detail.querySelector('.cluster-evidence-summary');
+    if(!evidence){evidence=document.createElement('div');evidence.className='cluster-evidence-summary';evidence.innerHTML=`Evidence coverage: ${Number(item.count||0)} media · ${(item.expected_identities||[]).length} expected identity labels · ${(item.face_cluster_labels||[]).length} face-cluster labels · ${(item.families||[]).length} source families · ${(item.review_methods||[]).length} review methods.`;detail.querySelector('h2')?.after(evidence)}
+    if(item.requires_image_review&&!detail.querySelector('.risk-warning')){const flags=(item.purity_flags||[]).map(flag=>flag.reason||flag.code||flag).filter(Boolean).join('; ');const warning=document.createElement('div');warning.className='risk-warning';warning.setAttribute('role','alert');warning.textContent='Image-level review required — this cluster has purity risks'+(flags?': '+flags:'')+'. These counts describe available labels; they are not a face-similarity score. Do not bulk-confirm it.';evidence.after(warning)}
+    if(!detail.querySelector('.compare-references')){const compare=document.createElement('button');compare.type='button';compare.className='compare-references';compare.textContent='Compare with confirmed identity examples';compare.title='Browse confirmed reference images across identities. Suggestions are not similarity scores and do not assign automatically.';compare.addEventListener('click',async()=>{compare.disabled=true;compare.textContent='Loading confirmed examples…';try{await loadIdentityGroups();const expected=new Set(item.expected_identities||[]);const known=identityGroups.filter(group=>!expected.has(group.identity)&&Number(group.confirmed||0)>0&&group.sample_paths?.length).slice(0,80);const panel=detail.querySelector('.compare-reference-panel')||document.createElement('section');panel.className='compare-reference-panel';panel.innerHTML='<b>Confirmed identity examples</b><p class="muted">Browse manually. No similarity scores are available here, and choosing an example does not assign the cluster.</p>';const grid=document.createElement('div');grid.className='compare-reference-grid';for(const group of known){const card=document.createElement('article');card.className='compare-reference-card';const name=document.createElement('b');name.textContent=`${group.identity} · ${group.confirmed} confirmed`;card.append(name);for(const path of group.sample_paths.filter(value=>/\.(bmp|gif|jpe?g|png|webp)$/i.test(value)).slice(0,2)){const link=document.createElement('a');link.href='/media?path='+encodeURIComponent(path);link.title=`Open confirmed example for ${group.identity}`;link.addEventListener('click',event=>openMediaModal(event,link));const image=document.createElement('img');image.loading='lazy';image.alt=`Confirmed example for ${group.identity}`;image.src=link.href;link.append(image);link.insertAdjacentHTML('beforeend',manualGroupBadgeMarkup(path));card.append(link)}grid.append(card)}panel.append(grid);if(!panel.isConnected)detail.querySelector('.cluster-evidence-summary')?.after(panel);compare.after(panel)}catch(error){compare.textContent=`Unable to load examples: ${error.message}`}finally{compare.disabled=false}});evidence.after(compare)}
   }
   const originalSelectForRisk=select;
   select=async function(id){const result=await originalSelectForRisk(id);showRiskWarning();addHistoryAndSummary();urlState();return result};
@@ -3506,7 +4335,7 @@ UI_ENHANCEMENT_SCRIPT = r"""
   function renderIdentityListEnhanced(){
     ensureIdentityScope();
     const query=(document.querySelector('#filter')?.value||'').trim().toLowerCase();
-    const baseline=['manual','metadaily','redditdaily','review'];
+    const baseline=['linked','manual','metadaily','redditdaily','review'];
     const visible=identityGroups.filter(group=>isCuratedIdentity(group)&&(group.identity+' '+(group.aliases||[]).join(' ')).toLowerCase().includes(query)&&(
       identityScope==='all'||(identityScope==='registry'&&baseline.includes(group.family))||(identityScope==='active'&&((group.count||0)>0||['manual','review'].includes(group.family)))
     )).sort((a,b)=>((b.count||0)-(a.count||0))||a.identity.localeCompare(b.identity));
@@ -3519,7 +4348,7 @@ UI_ENHANCEMENT_SCRIPT = r"""
   selectIdentity=async function(identity){
     const result=await originalSelectIdentityEnhanced(identity);ensureIdentityScope();
     const group=identityGroups.find(item=>item.identity===identity), detail=document.querySelector('#detail');
-    if(group&&detail){detail.dataset.total=String(group.count||0);const grid=detail.querySelector(':scope>.grid');if(grid)grid.dataset.loaded=String(grid.querySelectorAll('.imageSelect').length);if(hideConfirmed&&(group.confirmed||0)>0&&!detail.querySelector('.hidden-confirmed-note')){const note=document.createElement('div');note.className='hidden-confirmed-note muted';note.textContent=`${group.confirmed} confirmed images hidden — Show confirmed`;const button=document.createElement('button');button.type='button';button.textContent='Show confirmed';button.onclick=toggleHideConfirmed;note.append(' ',button);detail.querySelector('h2')?.after(note)}}
+    if(group&&detail){detail.dataset.total=String(group.count||0);const grid=detail.querySelector(':scope>.grid');if(grid)grid.dataset.loaded=String(grid.querySelectorAll('.imageSelect').length);const heading=detail.querySelector('h2');if(heading&&!detail.querySelector('.identity-provenance')){const provenance=document.createElement('div');provenance.className='identity-provenance muted';provenance.innerHTML=`<b>${esc(group.family==='review'?'Provisional review identity':group.family==='manual'?'Local manual identity':'Registry identity')}</b><br>${(group.aliases||[]).length?`Aliases: ${esc(group.aliases.join(', '))}`:'No aliases recorded'}<br>${Number(group.count||0)} unique known paths across decisions, markers, queues, clusters, and the sorted-folder scan. This is configured PicOrg evidence, not a completeness guarantee.`;heading.after(provenance)}if(hideConfirmed&&(group.confirmed||0)>0&&!detail.querySelector('.hidden-confirmed-note')){const note=document.createElement('div');note.className='hidden-confirmed-note muted';note.textContent=`${group.confirmed} confirmed images hidden — Show confirmed`;const button=document.createElement('button');button.type='button';button.textContent='Show confirmed';button.onclick=toggleHideConfirmed;note.append(' ',button);detail.querySelector('h2')?.after(note)}}
     addHistoryAndSummary();urlState();return result;
   };
 
@@ -3528,6 +4357,9 @@ UI_ENHANCEMENT_SCRIPT = r"""
   }
   function addSettingsTab(){
     const tabs=document.querySelector('.view-tabs');if(tabs&&!document.querySelector('#settingsTab')){const button=document.createElement('button');button.id='settingsTab';button.type='button';button.textContent='Settings / pipeline';button.onclick=()=>window.picorgNavigate('settings');tabs.append(button)}
+  }
+  function addReviewQueueTab(){
+    const tabs=document.querySelector('.view-tabs');if(tabs&&!document.querySelector('#reviewQueueTab')){const button=document.createElement('button');button.id='reviewQueueTab';button.type='button';button.textContent='Review queue';button.onclick=()=>window.picorgNavigate('review-queue');tabs.append(button)}
   }
   function enhanceSettingsWorkflow(){
     const card=document.querySelector('.settings-list .settings-card');
@@ -3545,6 +4377,12 @@ UI_ENHANCEMENT_SCRIPT = r"""
       const button=document.createElement('button');button.type='button';button.dataset.job='canonical_baseline';button.textContent='Build canonical face baseline';button.onclick=()=>launchScheduler('run','canonical_baseline').catch(error=>alert(error.message));
       actions.insertBefore(button,actions.firstElementChild?.nextElementSibling||null);
     }
+    const panel=document.querySelector('#detail .settings-panel');
+    if(panel&&!document.querySelector('#identityPickerSettings')){
+      const section=document.createElement('section');section.id='identityPickerSettings';section.className='settings-card';
+      section.innerHTML='<h3>Generic identity picker</h3><p class="muted">Choose identity name prefixes shown in the image picker. Separate prefixes with commas or new lines.</p><label for="identityPickerPrefixes">Identity prefixes</label><textarea id="identityPickerPrefixes" rows="4" style="width:100%;box-sizing:border-box"></textarea><div class="picker-settings-actions"><button type="button" onclick="saveIdentityPickerSettings().catch(error=>{document.querySelector(\'#identityPickerSettingsStatus\').textContent=error.message})">Save picker prefixes</button><span id="identityPickerSettingsStatus" role="status"></span></div>';
+      panel.append(section);loadIdentityPickerSettings().catch(error=>{const status=document.querySelector('#identityPickerSettingsStatus');if(status)status.textContent=error.message});
+    }
   }
   function schedulerStatusText(data){
     const status=data?.status||{};const config=data?.config||{};
@@ -3552,14 +4390,16 @@ UI_ENHANCEMENT_SCRIPT = r"""
     const daemon=data?.daemon_running?'Scheduler daemon running':'Scheduler daemon stopped';
     const schedule=config.enabled?`enabled every ${config.interval_minutes} minutes`:'disabled';
     const next=status.next_run_at?` · next ${new Date(status.next_run_at).toLocaleString()}`:'';
-    return `${active} · ${daemon} · ${schedule}${next}`;
+    const run=status.run_id?` · run ${status.run_id}`:'';
+    return `${active}${run} · ${daemon} · ${schedule}${next}`;
   }
   async function loadSchedulerSettings(){
     const panel=document.querySelector('#schedulerStatus');if(!panel)return;
     try{const response=await fetch('/api/scheduler/status',{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);
       const config=data.config||{};for(const id of ['scheduleEnabled','runIngest','updateBaseline','checkEvidence','rebuildFaces','migrateConfirmed','applyHighConfidence']){const el=document.querySelector('#'+id);if(el)el.checked=Boolean(config[{scheduleEnabled:'enabled',runIngest:'run_ingest',updateBaseline:'update_baseline',checkEvidence:'check_evidence',rebuildFaces:'rebuild_faces',migrateConfirmed:'migrate_confirmed',applyHighConfidence:'apply_high_confidence'}[id]])}const interval=document.querySelector('#scheduleInterval');if(interval)interval.value=config.interval_minutes||360;
       const evidence=data.evidence_health||{};const evidenceText=evidence.available?`Evidence DB: ${evidence.healthy?'healthy':'needs attention'} · SQLite ${evidence.runtime_sqlite||'unknown'}${evidence.backup?' · backup written':''}`:'Evidence DB health has not run';
-      panel.innerHTML=`<b>${esc(schedulerStatusText(data))}</b><small>${esc((data.status?.output_tail||[]).slice(-1)[0]||'Waiting for output')}</small><small>${esc(evidenceText)}</small>`;
+      panel.innerHTML=`<b>${esc(schedulerStatusText(data))}</b><small>${esc(data.status?.stage||'Waiting for output')}</small><small>${esc((data.status?.output_tail||[]).slice(-1)[0]||'No recent progress output')}</small><small>${esc(evidenceText)}</small>`;
+      document.querySelectorAll('.settings-actions button').forEach(button=>{if(button.textContent!=='Stop active job')button.disabled=Boolean(data.running)});
     }catch(error){panel.innerHTML=`<span role="alert">${esc(error.message)}</span>`}
   }
   window.picorgRefreshSchedulerSettings=loadSchedulerSettings;
@@ -3568,6 +4408,19 @@ UI_ENHANCEMENT_SCRIPT = r"""
     const response=await fetch('/api/scheduler/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await response.json();if(!response.ok)throw new Error(data.error||'Unable to save scheduler settings');document.querySelector('#schedulerStatus').textContent='Settings saved; '+(data.config.enabled?'automatic cycle enabled':'automatic cycle disabled');await loadSchedulerSettings();
   }
   window.saveSchedulerSettings=saveSchedulerSettings;
+  async function loadIdentityPickerSettings(){
+    const input=document.querySelector('#identityPickerPrefixes');if(!input)return;
+    const response=await fetch('/api/identity-picker/settings',{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||'Unable to load picker prefixes');
+    input.value=(data.prefixes||[]).join('\n');window.picorgSetIdentityPickerPrefixes?.(data.prefixes||[]);
+  }
+  async function saveIdentityPickerSettings(){
+    const input=document.querySelector('#identityPickerPrefixes'),status=document.querySelector('#identityPickerSettingsStatus');if(!input)return;
+    const prefixes=input.value.split(/[\n,]+/).map(value=>value.trim().toLowerCase()).filter(Boolean);
+    const response=await fetch('/api/identity-picker/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prefixes})}),data=await response.json();
+    if(!response.ok)throw new Error(data.error||'Unable to save picker prefixes');
+    input.value=(data.prefixes||[]).join('\n');window.picorgSetIdentityPickerPrefixes?.(data.prefixes||[]);if(status)status.textContent='Saved '+data.prefixes.length+' picker prefixes.';
+  }
+  window.saveIdentityPickerSettings=saveIdentityPickerSettings;
   async function launchScheduler(command,job){
     const response=await fetch('/api/scheduler/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command,job})}),data=await response.json();if(!response.ok)throw new Error(data.error||'Unable to launch pipeline step');await loadSchedulerSettings();
   }
@@ -3577,6 +4430,42 @@ UI_ENHANCEMENT_SCRIPT = r"""
   async function loadAssignmentQueue(){const panel=document.querySelector('#assignmentQueue');if(!panel)return;panel.textContent='Loading queued assignments…';try{const response=await fetch('/api/assignment-queue?status=pending,applying,error,conflict',{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);const items=data.assignments||[];panel.innerHTML=items.length?items.map(item=>`<div class="queue-row"><code>${esc(item.assignment_id)}</code><b>${esc(item.identity)}</b><span>${esc(item.status)}</span><small>${esc(item.path)}</small>${item.status==='pending'?`<button type="button" onclick="rejectQueuedAssignment(${Number(item.assignment_id)})">Reject</button>`:''}</div>`).join(''):'<span class="muted">No queued assignments.</span>'}catch(error){panel.innerHTML=`<span role="alert">${esc(error.message)}</span>`}}
   async function rejectQueuedAssignment(id){if(!confirm('Reject this queued assignment? The source file will not be changed.'))return;const response=await fetch('/api/assignment-queue/'+encodeURIComponent(id)+'/reject',{method:'POST'}),data=await response.json();if(!response.ok){alert(data.error||'Unable to reject queued assignment');return}await loadAssignmentQueue()}
   window.rejectQueuedAssignment=rejectQueuedAssignment;
+  let reviewQueueItems=[];
+  let reviewQueueOpenItems=[];
+  let reviewQueueModalItems=[];
+  let queueSearchTimer=null;
+  const queueResumeKey='picorg.review-queue.resume.v1';
+  const originalRenderMediaModalForQueue=renderMediaModal;
+  renderMediaModal=function(){originalRenderMediaModalForQueue();if(viewMode==='review-queue'){const current=reviewQueueModalItems[modalIndex];if(current)try{sessionStorage.setItem(queueResumeKey,String(current.assignment_id))}catch(_error){}}};
+  function queueCounts(items){return items.reduce((counts,item)=>{const key=String(item.status||'unknown');counts[key]=(counts[key]||0)+1;return counts},{})}
+  function openQueuedImage(id){
+    const index=reviewQueueOpenItems.findIndex(item=>Number(item.assignment_id)===Number(id));if(index<0)return;
+    try{sessionStorage.setItem(queueResumeKey,String(id))}catch(_error){}
+    const path=reviewQueueOpenItems[index].path;if(!path)return;
+    reviewQueueModalItems=reviewQueueOpenItems.slice(index).filter(item=>item.path);modalPaths=reviewQueueModalItems.map(item=>item.path);modalIndex=0;renderMediaModal();
+  }
+  async function activateReviewQueue(){
+    const list=document.querySelector('#list'),detail=document.querySelector('#detail'),next=document.querySelector('#nextPage');
+    viewMode='review-queue';selected=null;selectedIdentity=null;
+    document.querySelector('#reviewQueueTab')?.classList.add('active');document.querySelector('#identityTab')?.classList.remove('active');document.querySelector('#clusterTab')?.classList.remove('active');document.querySelector('#attentionTab')?.classList.remove('active');document.querySelector('#settingsTab')?.classList.remove('active');
+    if(next){next.hidden=true;next.style.display='none'}document.querySelector('#clusterMode').style.display='none';document.querySelector('#hideConfirmed')?.closest('label')?.setAttribute('hidden','hidden');document.querySelector('#attentionCategory')?.setAttribute('hidden','hidden');
+    document.querySelector('label[for="filter"]').textContent='Search queued assignments';document.querySelector('#filter').placeholder='Search identity or path';list.className='settings-list';list.innerHTML='<p class="muted">Loading durable review assignments…</p>';detail.innerHTML='';
+    try{
+      const response=await fetch('/api/assignment-queue',{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);
+      reviewQueueItems=data.assignments||[];const counts=queueCounts(reviewQueueItems),open=reviewQueueItems.filter(item=>['pending','applying','error','conflict'].includes(item.status));reviewQueueOpenItems=open;
+      let resumeId=null;try{resumeId=Number(sessionStorage.getItem(queueResumeKey))||null}catch(_error){}
+      const resume=open.find(item=>Number(item.assignment_id)===resumeId)||open[0];
+      document.querySelector('#summary').textContent=`${open.length} to review · ${counts.applied||0} applied · ${counts.error||0} errors · ${counts.conflict||0} conflicts · ${counts.rejected||0} rejected`;
+      const query=(document.querySelector('#filter').value||'').trim().toLocaleLowerCase();
+      list.innerHTML=`<section class="settings-panel"><h2>Durable assignment queue</h2><p class="muted">Resume opens the saved item and the remaining queue in order. Inspecting an image does not apply or change its queued assignment.</p>${resume?`<button type="button" class="queue-resume" data-assignment="${Number(resume.assignment_id)}">Resume at #${Number(resume.assignment_id)}</button>`:'<span class="muted">No assignments need review.</span>'}<div class="assignment-queue">${reviewQueueItems.filter(item=>!query||`${item.identity} ${item.path} ${item.status}`.toLocaleLowerCase().includes(query)).map(item=>{
+        const id=Number(item.assignment_id),active=['pending','applying','error','conflict'].includes(item.status),hash=String(item.expected_sha256||'').slice(0,12),source=String(item.source||'unknown');
+        return `<article class="queue-row"><code>#${id}</code><b>${esc(item.identity)}</b><span>${esc(item.status)}</span><small title="${esc(item.path)}">${esc(item.path)}</small>${item.path?`<button type="button" data-open-assignment="${id}">Inspect image</button>`:''}${item.status==='pending'?`<button type="button" onclick="rejectQueuedAssignment(${id})">Reject</button>`:''}<div class="queue-preview"><b>Move preview:</b> ${esc(item.identity)} · source ${esc(source)} · SHA-256 ${esc(hash||'unavailable')}<br>Destination and family are unresolved from this queue record. Stable source database row key is not recorded. This preview causes no source DB or media changes.</div>${item.error?`<small role="alert">${esc(item.error)}</small>`:''}</article>`
+      }).join('')||'<span class="muted">No assignments match this search.</span>'}</div></section>`;
+      list.querySelector('.queue-resume')?.addEventListener('click',event=>openQueuedImage(event.currentTarget.dataset.assignment));list.querySelectorAll('[data-open-assignment]').forEach(button=>button.addEventListener('click',()=>openQueuedImage(button.dataset.openAssignment)));
+      detail.innerHTML='<div class="empty-state"><h2>Queue progress</h2><p>Open an item to inspect its media. Apply or reject it only after checking the identity and evidence.</p><p class="muted">Queue state is stored with assignment IDs and expected file hashes. Source database updates are not part of this workflow.</p></div>';
+    }catch(error){list.innerHTML=`<p role="alert">${esc(error.message)}</p>`}
+    urlState();
+  }
   function activateSettings(){
     const list=document.querySelector('#list'),detail=document.querySelector('#detail');viewMode='settings';selected=null;selectedIdentity=null;const next=document.querySelector('#nextPage'),clusterMode=document.querySelector('#clusterMode');if(next){next.hidden=true;next.disabled=true;next.style.display='none'}if(clusterMode)clusterMode.style.display='none';document.querySelector('#hideConfirmed')?.closest('label')?.setAttribute('hidden','hidden');if(document.querySelector('#attentionCategory'))document.querySelector('#attentionCategory').hidden=true;list.className='settings-list';list.innerHTML='<div class="settings-card"><b>Pipeline steps</b><ul><li><b>Ingest:</b> move completed downloads and intake new media.</li><li><b>Name audit:</b> dry-run alias/name matching only; use it to inspect suggestions.</li><li><b>Reconcile confirmed:</b> migrate only confirmed images into canonical identity folders and refresh their face markers.</li><li><b>Rebuild face data:</b> accuracy-first reference coalescing and face database rebuild; this makes the review UI read-only.</li><li><b>Refresh matches:</b> reuse the validated face database for faster new-content matching.</li><li><b>Full cycle:</b> ingest, reconcile, rebuild/match, then reload the newest audit in the UI.</li></ul><p class="muted">Automatic scheduling is disabled until you enable it below. High-confidence moves are opt-in and remain gated by the existing safety checks.</p></div>';
     detail.innerHTML='<section class="settings-panel"><h2>Pipeline settings</h2><div id="schedulerStatus" class="scheduler-status" role="status">Loading scheduler status…</div><form id="schedulerForm" onsubmit="event.preventDefault();saveSchedulerSettings().catch(error=>{document.querySelector(\'#schedulerStatus\').textContent=error.message})"><label><input id="scheduleEnabled" type="checkbox"> Enable automatic cycle</label><label>Interval (minutes) <input id="scheduleInterval" type="number" min="5" max="10080" step="5" value="360"></label><label><input id="runIngest" type="checkbox" checked> Ingest completed downloads before each cycle</label><label><input id="checkEvidence" type="checkbox" checked> Check/backup evidence database each cycle</label><label><input id="rebuildFaces" type="checkbox" checked> Rebuild face references/database (accuracy-first)</label><label><input id="migrateConfirmed" type="checkbox" checked> Migrate confirmed media and refresh face markers</label><label><input id="applyHighConfidence" type="checkbox"> Apply high-confidence name matches (safety-gated)</label><div class="settings-actions"><button type="submit">Save settings</button><button type="button" onclick="launchScheduler(\'cycle\').catch(error=>alert(error.message))">Run full cycle now</button><button type="button" onclick="launchScheduler(\'run\',\'evidence_health\').catch(error=>alert(error.message))">Check/backup evidence DB</button><button type="button" onclick="launchScheduler(\'run\',\'ingest\').catch(error=>alert(error.message))">Run ingest</button><button type="button" onclick="launchScheduler(\'run\',\'name_audit\').catch(error=>alert(error.message))">Run name audit (dry-run)</button><button type="button" onclick="launchScheduler(\'run\',\'reconcile_confirmed\').catch(error=>alert(error.message))">Reconcile confirmed</button><button type="button" onclick="launchScheduler(\'run\',\'rebuild_faces\').catch(error=>alert(error.message))">Rebuild face data</button><button type="button" onclick="launchScheduler(\'run\',\'refresh_matches\').catch(error=>alert(error.message))">Refresh matches</button><button type="button" onclick="launchScheduler(\'run\',\'refresh_ui\').catch(error=>alert(error.message))">Reload UI audit</button><button type="button" onclick="launchScheduler(\'daemon\').catch(error=>alert(error.message))">Start scheduler</button><button type="button" onclick="stopScheduler().catch(error=>alert(error.message))">Stop active job</button></div></form><h3>Queued assignments</h3><p class="muted">Assignments are durable and queue-only until Reconcile confirmed applies them with SHA-256 verification.</p><div id="assignmentQueue" class="assignment-queue"></div></section>';
@@ -3608,6 +4497,7 @@ UI_ENHANCEMENT_SCRIPT = r"""
   }
   const originalShowViewEnhanced=showView;
   showView=async function(mode){
+    if(mode==='review-queue'){addReviewQueueTab();return activateReviewQueue()}
     if(mode==='settings'){activateSettings();enhanceSettingsWorkflow();addSettingsTab();document.querySelector('#settingsTab')?.classList.add('active');urlState();return}
     if(mode==='attention'){viewMode='attention';selected=null;selectedIdentity=null;activateAttention();document.querySelector('#list').innerHTML='<p class="muted scan-progress">Loading needs-attention queue…</p>';try{await loadAttention()}catch(error){document.querySelector('#list').innerHTML=`<p role="alert">${esc(error.message)}</p>`}urlState();return}
     const selector=document.querySelector('#attentionCategory');if(selector)selector.hidden=true;document.querySelector('#clusterMode').style.display='';document.querySelector('#hideConfirmed')?.closest('label')?.removeAttribute('hidden');
@@ -3615,10 +4505,10 @@ UI_ENHANCEMENT_SCRIPT = r"""
     if(mode==='identities'){
       const started=Date.now();scanTimer=setInterval(()=>{const list=document.querySelector('#list');if(list&&list.textContent.includes('Scanning'))list.innerHTML=`<p class="muted scan-progress">Scanning identity registry and assigned folders… ${Math.floor((Date.now()-started)/1000)}s elapsed. You can leave this view and return safely.</p>`},500);
     }
-    try{const result=await originalShowViewEnhanced(mode);addAttentionTab();addSettingsTab();document.querySelector('#attentionTab')?.classList.remove('active');document.querySelector('#settingsTab')?.classList.remove('active');ensureIdentityScope();urlState();return result}
+    try{const result=await originalShowViewEnhanced(mode);addAttentionTab();addSettingsTab();addReviewQueueTab();document.querySelector('#reviewQueueTab')?.classList.remove('active');document.querySelector('#attentionTab')?.classList.remove('active');document.querySelector('#settingsTab')?.classList.remove('active');ensureIdentityScope();urlState();return result}
     finally{if(scanTimer)clearInterval(scanTimer)}
   };
-  document.querySelector('#filter')?.addEventListener('input',()=>{if(viewMode==='attention')loadAttention();urlState()});
+  document.querySelector('#filter')?.addEventListener('input',()=>{if(viewMode==='attention')loadAttention();if(viewMode==='review-queue'){clearTimeout(queueSearchTimer);queueSearchTimer=setTimeout(activateReviewQueue,180)}urlState()});
   document.querySelector('#hideConfirmed')?.addEventListener('change',urlState);
 
   async function restoreUrlState(){
@@ -3628,11 +4518,12 @@ UI_ENHANCEMENT_SCRIPT = r"""
     if(params.get('show_confirmed')==='1'){hideConfirmed=false;const toggle=document.querySelector('#hideConfirmed');if(toggle)toggle.checked=false}
     if(requestedView==='settings'){await showView('settings');return}
     if(requestedView==='attention'){await showView('attention');return}
+    if(requestedView==='review-queue'){await showView('review-queue');return}
     if(requestedView==='identities'||params.get('identity')){await showView('identities');if(params.get('identity'))await selectIdentity(params.get('identity'));return}
     await showView('clusters');if(params.get('cluster'))await select(params.get('cluster'));
   }
   window.addEventListener('popstate',restoreUrlState);
-  addAttentionTab();addSettingsTab();ensureIdentityScope();
+  addAttentionTab();addSettingsTab();addReviewQueueTab();ensureIdentityScope();
   setTimeout(()=>{if(location.search)restoreUrlState();else urlState()},350);
 })();
 """
@@ -3739,6 +4630,553 @@ HTML_PAGE = HTML_PAGE.replace(
     1,
 )
 
+RELATED_IDENTITY_PICKER_CSS = r"""
+#relatedIdentityDialog{width:min(860px,calc(100vw - 28px));max-width:none;max-height:calc(100dvh - 28px);padding:0;border:1px solid #526a7a;border-radius:12px;background:#14212b;color:#edf5f8;box-shadow:0 16px 60px #000b}
+#relatedIdentityDialog:not([open]){display:none}
+#relatedIdentityDialog[open]{display:grid}
+#relatedIdentityDialog::backdrop{background:#000b}
+.related-identity-picker{display:grid;grid-template-rows:auto auto minmax(0,1fr);max-height:calc(100dvh - 28px)}
+.related-identity-picker header{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:12px;padding:14px 18px;background:#192a36;border-bottom:1px solid #405563}
+.related-identity-picker h2{flex:1;margin:0;font-size:1.1rem}
+.related-identity-picker input{margin:12px 16px;padding:10px;border:1px solid #526a7a;border-radius:7px;background:#0e1920;color:inherit}
+.related-identity-results{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:10px;overflow:auto;padding:0 16px 16px}
+.related-identity-card{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;width:100%;padding:9px;text-align:left;color:inherit;background:#1b2d39;border:1px solid #405563;border-radius:8px;cursor:pointer}
+.related-identity-card:hover,.related-identity-card:focus-visible{border-color:#92d8ef;outline:2px solid #92d8ef}
+.related-identity-card strong,.related-identity-card small{grid-column:1/-1;overflow-wrap:anywhere}
+.related-identity-card small{color:#b4c7d0}
+.related-identity-card img{width:100%;height:150px;object-fit:contain;background:#091117;border-radius:4px}
+.modal-pinned-identities{display:flex;flex-wrap:wrap;align-items:center;gap:6px;width:100%;padding:6px 8px;border:1px solid #526a7a;border-radius:7px;background:#182a35}
+.modal-pinned-identities[hidden]{display:none}
+.modal-pinned-identities>span{width:100%;font-weight:600;color:#c3dce8}
+.modal-pinned-identity{display:flex;gap:2px}
+.modal-pinned-identity button{padding:5px 8px;color:inherit;background:#294958;border:1px solid #527789;border-radius:5px;cursor:pointer}
+.modal-pinned-identity .modal-unpin-identity{padding-inline:6px;color:#d2e4eb}
+.related-identity-empty{grid-column:1/-1;padding:24px;text-align:center;color:#b4c7d0}
+@media(max-width:520px){.related-identity-results{grid-template-columns:1fr}.related-identity-card img{height:120px}}
+"""
+HTML_PAGE = HTML_PAGE.replace('</style>', RELATED_IDENTITY_PICKER_CSS + '</style>', 1)
+
+RELATED_IDENTITY_PICKER_SCRIPT = r"""
+(()=>{
+  const defaultPickerPrefixes=['fbhottie','redhottie','reddcutie','frecklehottie','gothbaddie','twins'];
+  const pinnedStorageKey='picorg.pinned-identities.v1';
+  let pinnedIdentities=[];
+  let pickerPrefixes=[...defaultPickerPrefixes];
+  let pickerSettingsLoaded=false;
+  let candidatesPromise=null;
+  function updatePickerButtonLabel(){
+    const button=document.querySelector('#mediaModalContent .related-identity-open');if(!button)return;
+    const labels=pickerPrefixes.map(prefix=>`${prefix}*`);button.textContent=`Find ${labels.join(' / ')}`;button.title=`Show identities beginning with: ${labels.join(', ')}`;
+  }
+  try{const stored=JSON.parse(localStorage.getItem(pinnedStorageKey)||'[]');if(Array.isArray(stored))pinnedIdentities=stored.filter(item=>item&&typeof item.identity==='string'&&item.identity.trim()).map(item=>({identity:item.identity.trim(),family:item.family||'review'}))}catch(_error){}
+  const dialog=document.createElement('dialog');dialog.id='relatedIdentityDialog';
+  dialog.className='related-identity-picker';
+  dialog.setAttribute('aria-labelledby','relatedIdentityTitle');
+  const header=document.createElement('header'),title=document.createElement('h2'),close=document.createElement('button');
+  title.id='relatedIdentityTitle';title.textContent='Choose a related identity';
+  close.type='button';close.textContent='Close';close.addEventListener('click',()=>dialog.close());header.append(title,close);
+  const search=document.createElement('input');search.type='search';search.placeholder='Filter identities or aliases';search.setAttribute('aria-label','Filter identities or aliases');
+  const results=document.createElement('div');results.className='related-identity-results';results.setAttribute('aria-live','polite');
+  dialog.append(header,search,results);document.body.append(dialog);
+  async function loadPickerPrefixes(){
+    try{const response=await fetch('/api/identity-picker/settings',{headers:{Accept:'application/json'}}),data=await response.json();if(response.ok&&Array.isArray(data.prefixes)&&data.prefixes.length){pickerPrefixes=data.prefixes;pickerSettingsLoaded=true}}catch(_error){}
+    updatePickerButtonLabel();
+  }
+  function setPickerPrefixes(values){
+    if(!Array.isArray(values))return;
+    const clean=[...new Set(values.map(value=>String(value||'').trim().toLowerCase()).filter(value=>/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)))];
+    if(!clean.length)return;
+    pickerPrefixes=clean;pickerSettingsLoaded=true;candidatesPromise=null;window.relatedIdentityCandidates=[];
+    updatePickerButtonLabel();
+    if(dialog.open)openPicker();
+  }
+  window.picorgSetIdentityPickerPrefixes=setPickerPrefixes;
+  function pickerEndpoint(){const params=new URLSearchParams();pickerPrefixes.forEach(prefix=>params.append('prefix',prefix));params.set('verified_examples','1');return '/api/identity-groups?'+params.toString()}
+  function useIdentity(item){
+    const picker=document.querySelector('#modalIdentity'),family=document.querySelector('#modalFamily'),typed=document.querySelector('#modalNewIdentity'),detailPicker=document.querySelector('#identity');
+    if(picker){if(!Array.from(picker.options).some(option=>option.value===item.identity))picker.add(new Option(item.identity,item.identity));picker.value=item.identity}
+    if(family){if(!Array.from(family.options).some(option=>option.value===item.family))family.add(new Option(item.family||'review',item.family||'review'));family.value=item.family||'review'}
+    if(detailPicker&&Array.from(detailPicker.options).some(option=>option.value===item.identity))detailPicker.value=item.identity;
+    if(typed)typed.value='';
+    const pinButton=document.querySelector('#mediaModalContent .modal-pin-current');if(pinButton)updateCurrentPinButton(pinButton);
+    dialog.close();
+    const status=document.querySelector('#mediaModalContent .media-modal-status');
+    if(status)status.textContent=`Selected ${item.identity}. Review the image, then use Assign & confirm.`;
+  }
+  function draw(){
+    const query=search.value.trim().toLocaleLowerCase();results.replaceChildren();
+    const matches=(window.relatedIdentityCandidates||[]).filter(item=>`${item.identity} ${(item.aliases||[]).join(' ')}`.toLocaleLowerCase().includes(query));
+    if(!matches.length){const empty=document.createElement('div');empty.className='related-identity-empty';empty.textContent='No matching identities with saved examples were found.';results.append(empty);return}
+    for(const item of matches){
+      const card=document.createElement('button');card.type='button';card.className='related-identity-card';card.addEventListener('click',()=>useIdentity(item));
+      const name=document.createElement('strong');name.textContent=item.identity;card.append(name);
+      const aliases=(item.aliases||[]).filter(Boolean);if(aliases.length){const note=document.createElement('small');note.textContent=`Aliases: ${aliases.join(', ')}`;card.append(note)}
+      const paths=(item.sample_paths||[]).filter(path=>/\.(bmp|gif|jpe?g|png|webp)$/i.test(path)).slice(0,2);
+      for(const path of paths){const frame=document.createElement('span');frame.className='manual-group-thumb';const image=document.createElement('img');image.loading='lazy';image.decoding='async';image.alt=`Example for ${item.identity}`;image.src='/media?path='+encodeURIComponent(path);image.addEventListener('error',()=>frame.remove(),{once:true});frame.append(image);frame.insertAdjacentHTML('beforeend',manualGroupBadgeMarkup(path));card.append(frame)}
+      if(!paths.length){const note=document.createElement('small');note.textContent='No saved image examples available';card.append(note)}
+      results.append(card);
+    }
+  }
+  function isPinned(identity){return pinnedIdentities.some(item=>item.identity.toLocaleLowerCase()===identity.toLocaleLowerCase())}
+  function savePinned(){try{localStorage.setItem(pinnedStorageKey,JSON.stringify(pinnedIdentities))}catch(_error){const status=document.querySelector('#mediaModalContent .media-modal-status');if(status)status.textContent='Could not save pinned identities in this browser.'}}
+  function togglePinned(item){if(isPinned(item.identity))pinnedIdentities=pinnedIdentities.filter(value=>value.identity.toLocaleLowerCase()!==item.identity.toLocaleLowerCase());else pinnedIdentities=[...pinnedIdentities,{identity:item.identity,family:item.family||'review'}];savePinned();renderPinnedIdentities()}
+  function currentModalIdentity(){const typed=document.querySelector('#modalNewIdentity')?.value.trim()||'',selected=document.querySelector('#modalIdentity')?.value.trim()||'',identity=typed||selected;if(!identity)return null;const known=(identityOptions||[]).find(item=>String(item.canonical||'').toLocaleLowerCase()===identity.toLocaleLowerCase());if(typed&&!known)return null;return{identity:known?.canonical||identity,family:known?.family||document.querySelector('#modalFamily')?.value||'review'}}
+  function applyPinnedIdentity(item){const picker=document.querySelector('#modalIdentity'),family=document.querySelector('#modalFamily'),typed=document.querySelector('#modalNewIdentity'),detailPicker=document.querySelector('#identity');if(picker){if(!Array.from(picker.options).some(option=>option.value===item.identity))picker.add(new Option(item.identity,item.identity));picker.value=item.identity}if(family){if(!Array.from(family.options).some(option=>option.value===item.family))family.add(new Option(item.family,item.family));family.value=item.family}if(detailPicker&&Array.from(detailPicker.options).some(option=>option.value===item.identity))detailPicker.value=item.identity;if(typed)typed.value='';if(modalLastIdentity&&modalLastIdentity.identity===item.identity)modalLastIdentity={identity:item.identity,family:item.family};assignModalImage()}
+  function renderPinnedIdentities(){
+    const toolbar=document.querySelector('#mediaModalContent .media-modal-toolbar'),identityTools=toolbar?.querySelector('.modal-identity-tools');if(!toolbar||!identityTools)return;
+    let row=identityTools.querySelector('#modalPinnedIdentities');if(!row){row=document.createElement('div');row.id='modalPinnedIdentities';row.className='modal-pinned-identities';row.setAttribute('role','group');row.setAttribute('aria-label','Pinned identities');const recent=identityTools.querySelector('#modalRecentIdentityList');identityTools.insertBefore(row,recent||identityTools.querySelector('#modalIdentity')?.nextSibling)}
+    row.replaceChildren();row.hidden=!pinnedIdentities.length;if(!pinnedIdentities.length)return;
+    const label=document.createElement('span');label.textContent='Pinned identities';row.append(label);
+    for(const item of pinnedIdentities){const group=document.createElement('div');group.className='modal-pinned-identity';const use=document.createElement('button');use.type='button';use.textContent=item.identity;use.title=`Assign and move to ${item.identity}`;use.addEventListener('click',()=>applyPinnedIdentity(item));const remove=document.createElement('button');remove.type='button';remove.className='modal-unpin-identity';remove.textContent='×';remove.setAttribute('aria-label',`Unpin ${item.identity}`);remove.addEventListener('click',()=>togglePinned(item));group.append(use,remove);row.append(group)}
+  }
+  function updateCurrentPinButton(button){const item=currentModalIdentity();button.disabled=!item;button.textContent=item&&isPinned(item.identity)?'Unpin selected identity':'Pin selected identity';button.title=item?'Keep this identity in the pinned list, independently of recent use.':'Select an identity above to pin it';button.setAttribute('aria-pressed',String(Boolean(item&&isPinned(item.identity))))}
+  function toggleCurrentPin(button){const item=currentModalIdentity();if(!item)return;togglePinned(item);updateCurrentPinButton(button)}
+  async function openPicker(){
+    search.value='';results.replaceChildren();const loading=document.createElement('div');loading.className='related-identity-empty';loading.textContent='Loading identities…';results.append(loading);
+    dialog.showModal();search.focus();
+    try{if(!pickerSettingsLoaded)await loadPickerPrefixes();candidatesPromise=null;window.relatedIdentityCandidates=[];candidatesPromise=fetch(pickerEndpoint(),{cache:'no-store',headers:{Accept:'application/json'}}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);return data});window.relatedIdentityCandidates=await candidatesPromise;for(const item of window.relatedIdentityCandidates)manualGroupMembershipsByPath={...manualGroupMembershipsByPath,...(item.manual_groups_by_path||{})};draw()}
+    catch(error){candidatesPromise=null;results.replaceChildren();const message=document.createElement('div');message.className='related-identity-empty';message.textContent=`Unable to load identities: ${error.message}`;results.append(message)}
+  }
+  search.addEventListener('input',draw);
+  dialog.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight')event.stopPropagation()});
+  dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close()});
+  const originalRenderMediaModal=renderMediaModal;
+  renderMediaModal=function(){originalRenderMediaModal();const toolbar=document.querySelector('#mediaModalContent .media-modal-toolbar'),identityTools=toolbar?.querySelector('.modal-identity-tools');if(!toolbar||!identityTools)return;let picker=toolbar.querySelector('.related-identity-open');if(!picker){picker=document.createElement('button');picker.type='button';picker.className='related-identity-open';picker.setAttribute('aria-haspopup','dialog');picker.addEventListener('click',openPicker);identityTools.append(picker)}updatePickerButtonLabel();let pin=toolbar.querySelector('.modal-pin-current');if(!pin){pin=document.createElement('button');pin.type='button';pin.className='modal-pin-current';pin.addEventListener('click',()=>toggleCurrentPin(pin))}const identitySelect=toolbar.querySelector('#modalIdentity');if(identitySelect)identitySelect.after(pin);else identityTools.append(pin);updateCurrentPinButton(pin);identitySelect?.addEventListener('change',()=>updateCurrentPinButton(pin));toolbar.querySelector('#modalNewIdentity')?.addEventListener('input',()=>updateCurrentPinButton(pin));renderPinnedIdentities()};
+})();
+"""
+HTML_PAGE = HTML_PAGE.replace('</script>', RELATED_IDENTITY_PICKER_SCRIPT + '</script>', 1)
+
+FULL_SIZE_IMAGE_VIEWER_CSS = r"""
+#fullSizeImageDialog{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#05080b;color:#fff;overflow:hidden}
+#fullSizeImageDialog:not([open]){display:none}
+#fullSizeImageDialog[open]{display:block}
+#fullSizeImageDialog::backdrop{background:#000d}
+.full-size-image-scroller{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain}
+.full-size-image-scroller img{display:block;width:auto;height:auto;max-width:none;max-height:none;min-width:0;object-fit:initial}
+.full-size-image-close{position:fixed;z-index:2;top:12px;right:12px;padding:9px 13px;color:#fff;background:#182630eF;border:1px solid #8fa3ad;border-radius:7px;cursor:pointer}
+.full-size-image-help{position:fixed;z-index:2;left:12px;bottom:10px;margin:0;padding:6px 9px;color:#fff;background:#182630d9;border-radius:5px;font-size:12px;pointer-events:none}
+"""
+HTML_PAGE = HTML_PAGE.replace('</style>', FULL_SIZE_IMAGE_VIEWER_CSS + '</style>', 1)
+
+MEDIA_MODAL_CLOSE_CSS = r"""
+.media-modal-close{z-index:1002;pointer-events:auto;min-width:44px;min-height:44px;display:grid;place-items:center}
+"""
+HTML_PAGE = HTML_PAGE.replace('</style>', MEDIA_MODAL_CLOSE_CSS + '</style>', 1)
+
+FULL_SIZE_IMAGE_VIEWER_SCRIPT = r"""
+(()=>{
+  const dialog=document.createElement('dialog');dialog.id='fullSizeImageDialog';dialog.setAttribute('aria-label','Full-size image view');
+  const scroller=document.createElement('div');scroller.className='full-size-image-scroller';
+  const image=document.createElement('img');image.alt='Full-size image';
+  const close=document.createElement('button');close.type='button';close.className='full-size-image-close';close.textContent='Close';
+  const help=document.createElement('p');help.className='full-size-image-help';help.textContent='Full size · scroll to inspect · Esc to close';
+  help.id='fullSizeImageHelp';dialog.setAttribute('aria-describedby',help.id);scroller.append(image);dialog.append(scroller,close,help);document.body.append(dialog);
+  let returnFocus=null;
+  function closeViewer(){dialog.close()}
+  function openViewer(source){returnFocus=source;help.textContent='Full size · scroll to inspect · Esc to close';image.src=source.currentSrc||source.src;image.alt=source.alt||'Full-size image';scroller.scrollTop=0;scroller.scrollLeft=0;dialog.showModal();close.focus()}
+  document.addEventListener('click',event=>{const source=event.target.closest?.('img');if(!source||source.closest('#detail .media-tile,#detail .manual-group-member,#mediaModalContent,#fullSizeImageDialog'))return;let url;try{url=new URL(source.currentSrc||source.src,location.href)}catch(_error){return}if(url.pathname!=='/media'||!url.searchParams.has('path'))return;event.preventDefault();event.stopImmediatePropagation();openViewer(source)},true);
+  close.addEventListener('click',closeViewer);
+  scroller.addEventListener('click',event=>{if(event.target===scroller)closeViewer()});
+  image.addEventListener('error',()=>{help.textContent='Unable to load the full-size image';});
+  dialog.addEventListener('close',()=>{if(returnFocus?.isConnected)returnFocus.focus()});
+  dialog.addEventListener('click',event=>{if(event.target===dialog)closeViewer()});
+  dialog.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight')event.stopPropagation()});
+  const originalRenderMediaModal=renderMediaModal;
+  renderMediaModal=function(){originalRenderMediaModal();const preview=document.querySelector('#mediaModalContent .media-preview-frame img');if(!preview)return;preview.tabIndex=0;preview.setAttribute('role','button');preview.title='Open full-size view';preview.style.cursor='zoom-in';preview.addEventListener('click',()=>openViewer(preview));preview.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openViewer(preview)}})};
+})();
+"""
+HTML_PAGE = HTML_PAGE.replace('</script>', FULL_SIZE_IMAGE_VIEWER_SCRIPT + '</script>', 1)
+
+MANUAL_GROUPS_CSS = r"""
+.manual-group-tools{display:grid;grid-template-columns:minmax(120px,1fr) auto;gap:8px;margin:12px 0;padding:12px;background:#182a35;border:1px solid #405563;border-radius:8px}
+.manual-group-badges{position:absolute;top:6px;left:6px;right:6px;display:flex;flex-wrap:wrap;gap:4px;pointer-events:none;z-index:2}.cluster-thumb-wrap,.manual-group-thumb,.compare-reference-card a,.manual-group-member>a{position:relative;display:block}.manual-group-thumb{min-width:0}.manual-group-thumb img{display:block;width:100%}
+.manual-group-badge{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 6px;border:1px solid rgba(255,255,255,.38);border-radius:999px;background:rgba(18,37,49,.88);color:#f4fbff;font-size:10px;line-height:1.4;text-shadow:0 1px 2px #000}
+.media-modal-content .manual-group-badges{top:8px;left:8px}
+.manual-group-tools label,.manual-group-tools .manual-group-status{grid-column:1/-1}
+.manual-group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.manual-group-card{display:grid;gap:7px;text-align:left;background:#1b2d39;color:inherit;border:1px solid #405563;border-radius:8px;padding:10px}
+.manual-group-card:hover{border-color:#92d8ef}
+.manual-group-member{display:grid;gap:5px;align-content:start;padding:7px;background:#1b2d39;border-radius:7px;min-width:0}
+.manual-group-member img{width:100%;height:150px;object-fit:contain;background:#091117}
+.manual-group-member label{overflow-wrap:anywhere;font-size:12px}
+.manual-group-modal{display:flex;flex:1 0 100%;align-items:center;gap:7px;flex-wrap:wrap;width:100%;padding-top:5px;border-top:1px solid #405563}
+.manual-group-modal input{flex:1 1 180px;min-width:0}
+.manual-group-recent{display:flex;align-items:center;gap:7px;flex:1 1 100%;font-size:12px;flex-wrap:wrap}
+.manual-group-recent label{flex:0 0 auto}
+.manual-group-recent select{flex:1;min-width:140px}
+.manual-group-tools .manual-group-recent{grid-column:1/-1}
+.recent-manual-group-buttons{display:flex;flex:1 1 100%;gap:3px;flex-wrap:wrap;align-content:start}
+.recent-manual-group-buttons[hidden]{display:none}
+.recent-manual-group-buttons button{min-width:0;max-width:100%;min-height:24px;padding:3px 6px;border-radius:999px;font-size:11px;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
+.recent-manual-group-buttons button[aria-pressed="true"]{outline:2px solid #8bc9d8}
+.manual-group-modal small,.manual-group-modal .status{flex-basis:100%}
+.recent-identity-shortlist{display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:100%;padding:2px 0}
+.recent-identity-shortlist[hidden]{display:none}
+.recent-identity-shortlist span{font-size:12px;color:#c7d8e1;flex:0 0 auto}
+.recent-identity-shortlist button{flex:0 0 auto;min-width:0;padding:6px 10px}
+.recent-identity-shortlist button[aria-pressed="true"]{outline:2px solid #8bc9d8}
+.detail{max-width:1600px;min-width:0}
+#detail>.form{max-width:none;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:8px 12px;padding:12px}
+#detail>.form>label{display:grid;grid-template-columns:minmax(105px,.36fr) minmax(0,1fr);align-items:center;gap:8px;min-width:0}
+#detail>.form>label>input,#detail>.form>label>select,#detail>.form>label>textarea{width:100%;min-width:0;box-sizing:border-box}
+#detail>.form>#recentIdentityList,#detail>.form>#status{grid-column:1/-1}
+#detail>.form>#recentIdentityList{color:#202124}
+#detail>.form>#recentIdentityList span{color:#59636d}
+#detail>.form>button{justify-self:start;min-height:34px;padding:5px 10px}
+#detail>.form textarea{min-height:54px;resize:vertical}
+#imageAssignTools{display:flex;align-items:center;gap:6px;padding:9px;line-height:1.35}
+#imageAssignTools b,#imageAssignTools p{flex:1 0 100%;margin:0}
+#imageAssignTools br{display:none}
+#imageAssignTools button{min-height:32px;padding:5px 8px;font-size:13px}
+.media-modal{padding:12px}
+.media-modal-content{width:min(96vw,1500px);max-width:none;max-height:calc(100vh - 24px);display:flex;flex-direction:column;gap:6px}
+.media-modal-content img,.media-modal-content video{max-width:96vw}
+.media-modal-toolbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;align-items:center;padding:8px}
+.media-modal-toolbar>button,.media-modal-toolbar>select,.media-modal-toolbar>input{width:100%;min-width:0;min-height:34px;box-sizing:border-box;padding:5px 7px;font-size:13px}
+.media-modal-toolbar>.modal-recent-identities,.media-modal-toolbar>.modal-pinned-identities,.media-modal-toolbar>.manual-group-modal{grid-column:1/-1}
+.media-modal-toolbar .recent-identity-shortlist{max-height:72px;overflow:auto}
+.media-modal-toolbar .recent-identity-shortlist button{padding:4px 8px;font-size:12px}
+.media-modal-toolbar .modal-pinned-identities{max-height:72px;overflow:auto;align-content:start}
+.media-modal-toolbar .manual-group-recent .recent-manual-group-buttons{max-height:58px;overflow:auto;align-content:start;padding:2px}
+.media-modal-toolbar .manual-group-modal{gap:5px;padding-top:5px}
+.media-modal-toolbar .manual-group-modal input,.media-modal-toolbar .manual-group-modal select{min-height:32px;padding:4px 7px}
+.media-modal-toolbar .manual-group-modal .manual-group-recent{gap:5px}
+@media(max-width:900px){.media-modal-toolbar{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:600px){#detail>.form{grid-template-columns:minmax(0,1fr)}#detail>.form>label{grid-template-columns:minmax(0,1fr);gap:4px}#detail>.form>#recentIdentityList,#detail>.form>#status{grid-column:auto}.media-modal-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}.media-modal-toolbar>.modal-recent-identities,.media-modal-toolbar>.modal-pinned-identities,.media-modal-toolbar>.manual-group-modal{grid-column:1/-1}}
+.media-modal-toolbar{grid-template-columns:minmax(76px,.45fr) minmax(250px,2fr) minmax(190px,.8fr) minmax(108px,.42fr);align-items:start}
+.modal-control-group{display:flex;flex-wrap:wrap;align-content:start;align-items:center;gap:6px;min-width:0;padding:7px;border:1px solid #465764;border-radius:7px;background:#17242c}
+.modal-control-group button,.modal-control-group input,.modal-control-group select{min-width:0;min-height:34px;box-sizing:border-box;padding:5px 7px;font-size:13px}
+.modal-navigation{justify-content:center}
+.modal-identity-tools{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+.modal-identity-tools input,.modal-identity-tools select{width:100%}
+.modal-identity-tools #modalIdentitySearch,.modal-identity-tools #modalIdentity,.modal-identity-tools #modalNewIdentity,.modal-identity-tools .related-identity-open{grid-column:span 2}
+.modal-identity-tools .modal-recent-identities,.modal-identity-tools .modal-pinned-identities{grid-column:1/-1;width:100%;min-width:0}
+#modalRecentIdentityList{display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:3px;max-height:88px;overflow:auto;align-content:start;white-space:normal}
+#modalRecentIdentityList span{grid-column:1/-1}
+#modalRecentIdentityList button{min-width:0;min-height:25px;padding:3px 5px;font-size:11px;line-height:1.15;text-align:center;white-space:normal;overflow-wrap:anywhere}
+.media-modal-toolbar>.modal-recent-identities{display:grid;grid-template-columns:repeat(auto-fill,minmax(125px,1fr));gap:5px;max-height:min(30dvh,260px);overflow-x:hidden;overflow-y:auto;align-content:start;white-space:normal}
+.media-modal-toolbar>.modal-recent-identities span{grid-column:1/-1}
+.media-modal-toolbar>.modal-recent-identities button{min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left}
+.modal-primary-actions .approve{flex:1 1 100%;min-height:40px;padding:6px 10px;font-size:14px;font-weight:700}
+.modal-primary-actions .modal-undo{flex:1 1 100%;min-height:34px}
+.modal-more-tools{min-width:0}
+.modal-more-tools>summary,.cluster-more-actions>summary{padding:7px 9px;border:1px solid #526775;border-radius:6px;background:#263943;color:#f4f8fb;font-weight:600;cursor:pointer}
+.modal-more-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.modal-more-actions button{min-height:32px;padding:5px 8px;font-size:13px}
+.manual-group-modal .modal-section-label{flex:0 0 100%;font-size:13px;color:#d1e1e8}
+#imageAssignTools{flex-wrap:wrap}
+.cluster-selection-actions,.cluster-primary-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.cluster-primary-actions{padding-left:8px;border-left:1px solid #c5cdd3}
+.cluster-primary-actions .approve{min-height:36px;padding:5px 10px;font-weight:700}
+.cluster-primary-actions .undo-action{min-height:34px;padding:5px 9px}
+.cluster-more-actions button{margin:6px 0 0 8px;min-height:32px;padding:5px 8px}
+@media(max-width:980px){.media-modal-toolbar{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}.modal-navigation{grid-column:1}.modal-identity-tools{grid-column:1/-1}.modal-primary-actions{grid-column:1}.modal-more-tools{grid-column:2}}
+@media(max-width:600px){.media-modal-toolbar{grid-template-columns:minmax(0,1fr)}.modal-navigation,.modal-identity-tools,.modal-primary-actions,.modal-more-tools{grid-column:1}.modal-identity-tools{grid-template-columns:repeat(2,minmax(0,1fr))}.modal-identity-tools #modalIdentitySearch,.modal-identity-tools #modalIdentity,.modal-identity-tools #modalNewIdentity,.modal-identity-tools .related-identity-open{grid-column:span 2}.cluster-primary-actions{padding-left:0;border-left:0}}
+.media-modal-content{width:min(97vw,1600px);height:min(96dvh,1000px);max-height:calc(100dvh - 24px);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;gap:6px 10px;overflow:hidden}
+.media-modal-toolbar{grid-column:1;grid-row:1/4;display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:8px;max-height:100%;overflow-y:auto;overscroll-behavior:contain;position:static;min-width:0}
+.modal-identity-tools{grid-template-columns:repeat(2,minmax(0,1fr))}
+.modal-identity-tools #modalIdentitySearch,.modal-identity-tools #modalIdentity,.modal-identity-tools #modalNewIdentity,.modal-identity-tools .related-identity-open{grid-column:1/-1}
+.media-modal-status{grid-column:2;grid-row:1;align-self:center;min-width:0}
+.media-preview-frame{grid-column:2;grid-row:2;display:flex;align-items:center;justify-content:center;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}
+.media-modal-content img,.media-modal-content video{width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain}
+.media-modal-caption{grid-column:2;grid-row:3;min-width:0}
+.media-modal-toolbar>.manual-group-modal{width:100%;box-sizing:border-box}
+.cluster-action-panel{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.85fr);gap:10px;margin:12px 0}
+.cluster-action-section{min-width:0;padding:12px;background:#fff;border:1px solid #d8dfe5;border-radius:9px;box-shadow:0 1px 2px #17242c12}
+.cluster-action-section h3{margin:0 0 8px;font-size:15px;color:#202a31}
+.cluster-action-section>summary{font-size:14px;font-weight:650;color:#202a31;cursor:pointer;list-style-position:inside}
+.cluster-action-section>.form{max-width:none;margin:0;padding:0;background:transparent;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.cluster-action-section>.form>label{display:grid;grid-template-columns:minmax(95px,.4fr) minmax(0,1fr);align-items:center;gap:7px;min-width:0}
+.cluster-action-section>.form>label>input,.cluster-action-section>.form>label>select,.cluster-action-section>.form>label>textarea{width:100%;min-width:0;box-sizing:border-box}
+.cluster-action-section>.form>#recentIdentityList,.cluster-action-section>.form>#status{grid-column:1/-1}
+.cluster-action-section>.form>#recentIdentityList{color:#202124}
+.cluster-action-section>.form>#recentIdentityList span{color:#59636d}
+.cluster-action-section>.form>button{justify-self:start;min-height:36px;padding:6px 11px}
+.cluster-action-section>#imageAssignTools{margin:0;padding:0;background:transparent;border:0}
+.cluster-action-section>.manual-group-tools{margin:0;background:#f4f7f9;border-color:#d8dfe5}
+.cluster-action-panel>.cluster-group-section,.cluster-action-panel>.cluster-membership-section{grid-column:1/-1}
+.cluster-group-section>.manual-group-tools label{color:#26333b}
+.cluster-membership-section summary{font-weight:600;cursor:pointer}
+.cluster-membership-section>#memberTools{margin:8px 0 0;padding:0;background:transparent}
+@media(max-width:760px){.media-modal{align-items:center;padding:8px}.media-modal-content{width:100%;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto auto minmax(0,.8fr);gap:4px}.media-modal-toolbar{grid-column:1;grid-row:4;max-height:100%;padding:6px}.media-modal-toolbar>.modal-recent-identities{max-height:min(24dvh,190px)}.media-modal-status{grid-column:1;grid-row:2}.media-preview-frame{grid-column:1;grid-row:1}.media-modal-caption{grid-column:1;grid-row:3}}
+@media(max-width:720px){.cluster-action-panel{grid-template-columns:minmax(0,1fr)}.cluster-action-panel>.cluster-group-section,.cluster-action-panel>.cluster-membership-section{grid-column:1}.cluster-action-section>.form{grid-template-columns:minmax(0,1fr)}.cluster-action-section>.form>label{grid-template-columns:minmax(0,1fr);gap:4px}.cluster-action-section>.form>#recentIdentityList,.cluster-action-section>.form>#status{grid-column:auto}}
+"""
+HTML_PAGE = HTML_PAGE.replace('</style>', MANUAL_GROUPS_CSS + '</style>', 1)
+
+MANUAL_GROUPS_SCRIPT = r"""
+(()=>{
+  let manualGroupsActive=false,manualGroups=[],activeManualGroupName="";
+  const RECENT_MANUAL_GROUPS_KEY='picorg.recent-manual-groups.v1';
+  let recentManualGroups=[];
+  try{const stored=JSON.parse(localStorage.getItem(RECENT_MANUAL_GROUPS_KEY)||'[]');if(Array.isArray(stored))recentManualGroups=[...new Set(stored.filter(name=>typeof name==='string'&&name.trim()).map(name=>name.trim()))].slice(0,20)}catch(_error){}
+  const list=document.querySelector('#list'),detail=document.querySelector('#detail'),filter=document.querySelector('#filter');
+  function syncRecentGroupPickers(){for(const wrapper of document.querySelectorAll('.manual-group-recent')){const select=wrapper.querySelector('.recent-manual-group');if(!select)continue;const selected=select.value;select.replaceChildren(new Option(recentManualGroups.length?'Choose a recent group':'No recent groups',''));for(const name of recentManualGroups)select.append(new Option(name,name));select.value=recentManualGroups.includes(selected)?selected:'';select.disabled=!recentManualGroups.length;const buttons=wrapper.querySelector('.recent-manual-group-buttons');if(!buttons)continue;buttons.replaceChildren();buttons.hidden=!recentManualGroups.length;for(const name of recentManualGroups){const button=document.createElement('button');button.type='button';button.textContent=name;button.setAttribute('aria-pressed',String(document.getElementById(select.dataset.targetId)?.value===name));button.onclick=()=>applyRecentManualGroup(select,name,button);buttons.append(button)}}}
+  function rememberManualGroup(name){const value=String(name||'').trim();if(!value)return;recentManualGroups=[value,...recentManualGroups.filter(item=>item.toLocaleLowerCase()!==value.toLocaleLowerCase())].slice(0,20);try{localStorage.setItem(RECENT_MANUAL_GROUPS_KEY,JSON.stringify(recentManualGroups))}catch(_error){}persistRecentChoice('group',value);syncRecentGroupPickers()}
+  async function restoreRecentManualGroups(){let local=[...recentManualGroups];try{const response=await fetch('/api/recent-choices'),data=await response.json(),remote=Array.isArray(data.groups)?data.groups:[];if(remote.length)recentManualGroups=remote;else if(local.length){recentManualGroups=local;for(const name of local.slice().reverse())await fetch('/api/recent-choices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'group',name})})}try{localStorage.setItem(RECENT_MANUAL_GROUPS_KEY,JSON.stringify(recentManualGroups))}catch(_error){}syncRecentGroupPickers()}catch(_error){}}
+  restoreRecentManualGroups();
+  function createRecentGroupPicker(input,id){const wrapper=document.createElement('div');wrapper.className='manual-group-recent';const label=document.createElement('label');label.htmlFor=id;label.textContent='Recently used groups';const select=document.createElement('select');select.id=id;select.className='recent-manual-group';select.dataset.targetId=input.id;select.setAttribute('aria-label','Recently used groups');select.onchange=()=>{if(select.value){input.value=select.value;syncRecentGroupPickers()}};const buttons=document.createElement('div');buttons.className='recent-manual-group-buttons';wrapper.append(label,select,buttons);syncRecentGroupPickers();return wrapper}
+  function clusterSection(panel,className,title,tag='details'){let section=panel.querySelector(':scope >.'+className);if(!section){section=document.createElement(tag);section.className='cluster-action-section '+className;const heading=document.createElement(tag==='details'?'summary':'h3');heading.textContent=title;section.append(heading);panel.append(section)}return section}
+  function arrangeClusterControls(){if(viewMode!=='clusters'||manualGroupsActive)return;const grid=detail.querySelector(':scope>.grid'),form=detail.querySelector('.form'),imageTools=detail.querySelector('#imageAssignTools'),groupTools=detail.querySelector('#manualGroupTools'),memberTools=detail.querySelector('#memberTools');if(!grid||(!form&&!imageTools&&!groupTools))return;let panel=detail.querySelector(':scope>.cluster-action-panel');if(!panel){panel=document.createElement('section');panel.className='cluster-action-panel';panel.setAttribute('aria-label','Cluster review controls')}const decision=clusterSection(panel,'cluster-decision-section','Cluster identity'),images=clusterSection(panel,'cluster-image-section','Image selection and assignment'),groups=clusterSection(panel,'cluster-group-section','Visual group'),membership=clusterSection(panel,'cluster-membership-section','Cluster membership tools','details');if(form&&form.parentElement!==decision)decision.append(form);if(imageTools&&imageTools.parentElement!==images){imageTools.querySelector(':scope>b')?.remove();images.append(imageTools)}if(groupTools&&groupTools.parentElement!==groups)groups.append(groupTools);if(memberTools&&memberTools.parentElement!==membership){memberTools.querySelector(':scope>b')?.remove();membership.append(memberTools)}if(panel.parentElement!==detail||panel.nextElementSibling!==grid)detail.insertBefore(panel,grid)}
+  const clusterControlObserver=new MutationObserver(arrangeClusterControls);clusterControlObserver.observe(detail,{childList:true,subtree:true});
+  function advanceAfterManualGroupAssignment(path,isModal){if(isModal)advanceModalPath(path,'Group assignment complete — no unassigned images remain in this cluster.')}
+  async function applyRecentManualGroup(select,name,button){const input=document.getElementById(select.dataset.targetId);if(!input)return;input.value=name;select.value=name;for(const shortcut of select.closest('.manual-group-recent')?.querySelectorAll('.recent-manual-group-buttons button')||[])shortcut.setAttribute('aria-pressed',String(shortcut.textContent===name));const isModal=select.id==='modalRecentManualGroups',paths=isModal?[modalPaths[modalIndex]].filter(Boolean):[...document.querySelectorAll('#detail .imageSelect:checked')].map(item=>item.dataset.path),status=document.querySelector(isModal?'.manual-group-modal .status':'#manualGroupTools .manual-group-status');if(!paths.length){if(status)status.textContent=isModal?'No image is open. Select images in the cluster first.':'Select the images to add using their checkboxes.';return}if(paths.length>500){if(status)status.textContent='Add up to 500 selected images at a time.';return}if(!isModal&&!status){return}if(button)button.disabled=true;try{const response=await fetch('/api/manual-groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,paths})}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);for(const path of paths)updateManualGroupMembership(path,data.name);rememberManualGroup(data.name);if(status)status.textContent=`Added ${data.added} image(s) to ${data.name}; ${data.count} images in collection.`;if(isModal)advanceAfterManualGroupAssignment(paths[0],true);else if(viewMode==='clusters')await window.advanceClusterIfHandled?.();fetchGroups().then(()=>{for(const options of document.querySelectorAll('#manualGroupNames,#modalManualGroupNames'))options.replaceChildren(...manualGroups.map(group=>new Option(group.name,group.name)))}).catch(error=>{if(!isModal&&status)status.textContent+=` Collection list refresh failed: ${error.message}`})}catch(error){if(status)status.textContent=error.message}finally{if(button)button.disabled=false}}
+  function addTab(){const tabs=document.querySelector('.view-tabs');if(!tabs||document.querySelector('#manualGroupsTab'))return;const button=document.createElement('button');button.id='manualGroupsTab';button.type='button';button.textContent='Manual collections';button.onclick=()=>window.picorgNavigate('manual-groups');tabs.append(button)}
+  function setTab(){document.querySelector('#manualGroupsTab')?.classList.toggle('active',manualGroupsActive);if(manualGroupsActive){document.querySelector('#identityTab')?.classList.remove('active');document.querySelector('#clusterTab')?.classList.remove('active');document.querySelector('#attentionTab')?.classList.remove('active');document.querySelector('#settingsTab')?.classList.remove('active');document.querySelector('#reviewQueueTab')?.classList.remove('active')}}
+  async function fetchGroups(){const response=await fetch('/api/manual-groups',{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);manualGroups=data;syncRecentGroupPickers();return data}
+  function renderGroups(){const query=(filter?.value||'').trim().toLowerCase(),visible=manualGroups.filter(group=>group.name.toLowerCase().includes(query));list.className='identity-grid';document.querySelector('#summary').textContent=`${visible.length} manual collections · ${visible.reduce((sum,group)=>sum+group.count,0)} images`;list.replaceChildren();if(!visible.length){list.innerHTML='<p class="muted">No manual collections yet. In a cluster, select images with their checkboxes, then add those images to a collection.</p>';return}for(const group of visible){const button=document.createElement('button');button.type='button';button.className='identity-card manual-group-card';const title=document.createElement('b');title.textContent=group.name;const count=document.createElement('span');count.textContent=`${group.count} images`;button.append(title,count);button.onclick=()=>openGroup(group.name);list.append(button)}}
+  async function openGroup(name){activeManualGroupName=name;detail.innerHTML='<p class="muted">Loading collection…</p>';try{const response=await fetch('/api/manual-groups/'+encodeURIComponent(name),{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);detail.replaceChildren();for(const [path,names] of Object.entries(data.manual_groups_by_path||{}))manualGroupMembershipsByPath[path]=names;for(const path of data.paths)updateManualGroupMembership(path,data.name);const title=document.createElement('h2');title.textContent=data.name;const explanation=document.createElement('p');explanation.className='muted';explanation.textContent=`${data.count} images. This is a visual collection; membership does not identify a person, assign an identity, or move files.`;const remove=document.createElement('button');remove.type='button';remove.textContent='Remove selected from collection';remove.onclick=()=>removeMembers(data.name);const status=document.createElement('div');status.className='status';status.id='manualGroupDetailStatus';const grid=document.createElement('div');grid.className='manual-group-grid';for(const path of data.paths){const card=document.createElement('div');card.className='manual-group-member';const link=document.createElement('a');link.href='/media?path='+encodeURIComponent(path);link.onclick=async event=>{event.preventDefault();try{if(!identityOptions.length)await loadIdentityOptions();window.openReviewModalForPaths(event,link,data.paths)}catch(error){const status=document.querySelector('#manualGroupDetailStatus');if(status)status.textContent=`Unable to load identities: ${error.message}`}};const image=document.createElement('img');image.loading='lazy';image.src=link.href;image.alt=path;link.append(image);link.insertAdjacentHTML('beforeend',manualGroupBadgeMarkup(path));const label=document.createElement('label');const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.className='manual-group-remove';checkbox.dataset.path=path;label.append(checkbox,document.createTextNode(' Remove'));const caption=document.createElement('small');caption.textContent=path;card.append(link,label,caption);grid.append(card)}detail.append(title,explanation,remove,status,grid)}catch(error){detail.innerHTML=`<p role="alert">${esc(error.message)}</p>`}}
+  window.picorgRefreshManualGroupView=async function(){if(viewMode!=='manual-groups'||!activeManualGroupName)return;await fetchGroups();renderGroups();await openGroup(activeManualGroupName)};
+  async function removeMembers(name){const paths=[...detail.querySelectorAll('.manual-group-remove:checked')].map(input=>input.dataset.path);const status=document.querySelector('#manualGroupDetailStatus');if(!paths.length){if(status)status.textContent='Select images to remove.';return}try{const response=await fetch('/api/manual-groups/'+encodeURIComponent(name)+'/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths})}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);await fetchGroups();renderGroups();await openGroup(name)}catch(error){if(status)status.textContent=error.message}}
+  async function showManualGroups(){manualGroupsActive=true;viewMode='manual-groups';selected=null;selectedIdentity=null;setTab();const next=document.querySelector('#nextPage');if(next){next.hidden=true;next.disabled=true}document.querySelector('#clusterMode')?.setAttribute('hidden','hidden');document.querySelector('#hideConfirmed')?.closest('label')?.setAttribute('hidden','hidden');if(filter){filter.value='';filter.placeholder='Search manual collections'}const label=document.querySelector('label[for="filter"]');if(label)label.textContent='Search manual collections';history.replaceState(null,'',`${location.pathname}?view=manual-groups`);detail.innerHTML='<p class="muted">Choose a collection.</p>';await fetchGroups();renderGroups()}
+  const priorModalRender=renderMediaModal;renderMediaModal=function(){priorModalRender();const frame=document.querySelector('#mediaModalContent .media-preview-frame'),path=modalPaths[modalIndex];if(frame&&path&&!frame.querySelector('.manual-group-badges'))frame.insertAdjacentHTML('beforeend',manualGroupBadgeMarkup(path));const toolbar=document.querySelector('#mediaModalContent .media-modal-toolbar');if(!toolbar||toolbar.querySelector('.manual-group-modal'))return;const row=document.createElement('div');row.className='manual-group-modal';const heading=document.createElement('strong');heading.className='modal-section-label';heading.textContent='Visual collection';const input=document.createElement('input');input.type='text';input.setAttribute('list','modalManualGroupNames');input.id='modalManualGroupName';input.placeholder='Choose or create a visual collection';input.setAttribute('aria-label','Manual collection for this image');const options=document.createElement('datalist');options.id='modalManualGroupNames';const recent=createRecentGroupPicker(input,'modalRecentManualGroups');const button=document.createElement('button');button.type='button';button.textContent='Add image to collection';const status=document.createElement('div');status.className='status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');const note=document.createElement('small');note.textContent='Collection tag only; individual identity matching and face markers are unchanged.';row.append(heading,input,options,recent,button,status,note);toolbar.append(row);fetchGroups().then(groups=>{for(const group of groups){const option=document.createElement('option');option.value=group.name;options.append(option)}}).catch(error=>{status.textContent=error.message});button.onclick=async()=>{const name=input.value.trim(),path=modalPaths[modalIndex];if(!name){status.textContent='Choose or enter a collection name.';return}if(!path){status.textContent='No image is open.';return}button.disabled=true;try{const response=await fetch('/api/manual-groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,paths:[path]})}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);status.textContent=`Added this image to ${data.name}.`;updateManualGroupMembership(path,data.name);rememberManualGroup(data.name);advanceAfterManualGroupAssignment(path,true);fetchGroups().then(groups=>options.replaceChildren(...groups.map(group=>{const option=document.createElement('option');option.value=group.name;return option}))).catch(error=>{status.textContent+=` Collection list refresh failed: ${error.message}`})}catch(error){status.textContent=error.message}finally{button.disabled=false}}};
+  addTab();
+  const priorShow=window.showView;window.showView=async function(mode){if(mode==='manual-groups')return showManualGroups();manualGroupsActive=false;setTab();return priorShow(mode)};
+  filter?.addEventListener('input',()=>{if(manualGroupsActive)renderGroups()});
+  const priorSelect=window.select;window.select=async function(id){const result=await priorSelect(id);if(!manualGroupsActive&&selected===id){const form=document.querySelector('#detail .form'),host=document.querySelector('#imageAssignTools')||form?.parentElement;if(form&&host&&!document.querySelector('#manualGroupTools')){const box=document.createElement('section');box.id='manualGroupTools';box.className='manual-group-tools';const label=document.createElement('label');label.textContent='Manual collection (new or existing)';const input=document.createElement('input');input.id='manualGroupName';input.setAttribute('list','manualGroupNames');input.placeholder='e.g. gothgroup';const options=document.createElement('datalist');options.id='manualGroupNames';const recent=createRecentGroupPicker(input,'recentManualGroups');try{for(const group of await fetchGroups()){const option=document.createElement('option');option.value=group.name;options.append(option)}}catch(_error){}const button=document.createElement('button');button.type='button';button.textContent='Add selected images';button.onclick=async()=>{const name=input.value.trim(),paths=[...document.querySelectorAll('#detail .imageSelect:checked')].map(item=>item.dataset.path);if(!name)return status.textContent='Enter or choose a collection name.';if(!paths.length)return status.textContent='Select the images to add using their checkboxes.';if(paths.length>500)return status.textContent='Add up to 500 selected images at a time.';if(!confirm(`Add ${paths.length} selected image(s) to ${name}? This saves collection membership only; it does not assign an identity or move files.`))return;button.disabled=true;try{const response=await fetch('/api/manual-groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,paths})}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);status.textContent=`Added ${data.added} selected image(s) to ${data.name}; ${data.count} images in collection.`;for(const path of paths)updateManualGroupMembership(path,data.name);rememberManualGroup(data.name);await fetchGroups();options.replaceChildren(...manualGroups.map(group=>{const option=document.createElement('option');option.value=group.name;return option}))}catch(error){status.textContent=error.message}finally{button.disabled=false}};const status=document.createElement('div');status.className='manual-group-status';status.setAttribute('role','status');box.append(label,input,options,recent,button,status);host.append(box)}}return result};
+  addTab();
+})();
+"""
+IDENTITY_RECONCILIATION_NAV_SCRIPT = r"""
+(()=>{const tabs=document.querySelector('.view-tabs');if(!tabs||document.querySelector('#identityReconciliationTab'))return;const button=document.createElement('button');button.id='identityReconciliationTab';button.type='button';button.textContent='Registry review';button.title='Review local manual identities against the shared registry';button.addEventListener('click',()=>{window.location.href='/identity-reconciliation'});tabs.append(button)})();
+"""
+HTML_PAGE = HTML_PAGE.replace('</script>', MANUAL_GROUPS_SCRIPT + IDENTITY_RECONCILIATION_NAV_SCRIPT + '</script>', 1)
+
+REVIEW_WORKFLOW_CSS = r"""
+.view-tabs{display:flex!important;flex-wrap:wrap;gap:6px}
+.view-tabs button{flex:1 1 130px;min-width:0}
+.queue-preview,.identity-provenance,.cluster-evidence-summary{grid-column:1/-1;padding:8px 10px;border-radius:6px;background:#172832;color:#c8d7df;line-height:1.45;overflow-wrap:anywhere}
+.queue-preview{font-size:.9rem;border-left:3px solid #d6a85e}
+.queue-resume,.compare-references{margin:8px 0}
+.compare-reference-panel{margin:10px 0;padding:10px;border:1px solid #405563;border-radius:8px}
+.compare-reference-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;margin-top:8px}
+.compare-reference-card{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:8px;border:1px solid #405563;border-radius:7px;overflow:hidden}
+.compare-reference-card b{grid-column:1/-1;overflow-wrap:anywhere}
+.compare-reference-card img{width:100%;height:130px;object-fit:contain;background:#091117}
+.assignment-queue .queue-row{grid-template-columns:auto minmax(100px,auto) auto minmax(0,1fr) auto auto}
+@media(max-width:620px){.assignment-queue .queue-row{grid-template-columns:repeat(2,minmax(0,1fr))}.queue-row small,.queue-preview{grid-column:1/-1}.compare-reference-card img{height:100px}}
+"""
+HTML_PAGE = HTML_PAGE.replace('</style>', REVIEW_WORKFLOW_CSS + '</style>', 1)
+HTML_PAGE = HTML_PAGE.replace(
+    "${x.count} files · ${status}",
+    "${x.hidden_count} hidden · ${x.grouped_unassigned_count} grouped, unassigned · ${x.total_count} total · ${x.unassigned_count} to review · ${status}",
+)
+
+
+HTML_PAGE = HTML_PAGE.replace(
+    "let currentClusterImageDecisions={},",
+    "let currentFaceLinkScores={};let currentClusterImageDecisions={},",
+    1,
+)
+HTML_PAGE = HTML_PAGE.replace(
+    "manualGroupMembershipsByPath={...manualGroupMembershipsByPath,...(x.manual_groups_by_path||{})};currentClusterImageDecisions=",
+    "manualGroupMembershipsByPath={...manualGroupMembershipsByPath,...(x.manual_groups_by_path||{})};currentFaceLinkScores=x.face_link_scores||{};currentClusterImageDecisions=",
+    1,
+)
+HTML_PAGE = HTML_PAGE.replace("</style>", ".face-link-score{font-size:11px;font-weight:650;color:#c4d8e4;padding:3px 2px}.face-link-score.weak{color:#ffe09a}</style>", 1)
+FACE_LINK_SCORE_SCRIPT = r"""
+function addFaceLinkScores(){
+  const scores=Object.entries(currentFaceLinkScores||{}).filter(([,score])=>Number.isFinite(Number(score)));
+  if(!scores.length)return;
+  const weakest=Math.min(...scores.map(([,score])=>Number(score)));
+  document.querySelectorAll('#detail .media-tile').forEach(tile=>{
+    if(tile.querySelector('.face-link-score'))return;
+    const path=tile.querySelector('.imageSelect')?.dataset.path;
+    const score=Number(currentFaceLinkScores[path]);
+    if(!Number.isFinite(score))return;
+    const weak=Math.abs(score-weakest)<0.000001;
+    const label=document.createElement('div');
+    label.className='face-link-score'+(weak?' weak':'');
+    label.textContent=(weak?'Weakest link · ':'Face match · ')+(score*100).toFixed(1)+'%';
+    label.title='Cosine similarity to cluster members already present when this image joined. This is grouping evidence, not an identity confidence.';
+    tile.append(label);
+  });
+}
+new MutationObserver(addFaceLinkScores).observe(document.querySelector('#detail'),{childList:true,subtree:true});
+const originalFaceLinkModal=openMediaModal;
+openMediaModal=function(event,anchor){
+  originalFaceLinkModal(event,anchor);
+  const caption=document.querySelector('#mediaModalContent .media-modal-caption');
+  if(!caption||caption.dataset.faceLinkScore==='shown')return;
+  const path=new URL(anchor.getAttribute('href'),location.href).searchParams.get('path')||'';
+  const score=Number(currentFaceLinkScores[path]);
+  if(Number.isFinite(score))caption.textContent+=' · Face match '+(score*100).toFixed(1)+'%';
+  caption.dataset.faceLinkScore='shown';
+};
+"""
+HTML_PAGE = HTML_PAGE.replace("</script>", FACE_LINK_SCORE_SCRIPT + "</script>", 1)
+
+HTML_PAGE = HTML_PAGE.replace(
+    "</style>",
+    ".cluster-navigation{display:flex;align-items:center;gap:8px;margin:8px 0 12px}.cluster-navigation button{padding:5px 10px;font-size:12px}.cluster-navigation button[data-direction=\"1\"]{min-height:34px;font-weight:700}.cluster-navigation-label{font-size:12px;color:#aec1cd}",
+    1,
+)
+CLUSTER_NAVIGATION_SCRIPT = r"""
+function visibleClusterIds(){
+  return [...document.querySelectorAll('#list .cluster')]
+    .map(card=>card.dataset.clusterId||card.getAttribute('onclick')?.match(/select\('([^']+)'\)/)?.[1])
+    .filter(Boolean);
+}
+function updateClusterNavigation(){
+  const detail=document.querySelector('#detail');
+  if(!selected||!detail?.querySelector('.grid')||viewMode==='identities'||viewMode==='settings'){
+    detail?.querySelector('#clusterNavigation')?.remove();
+    return;
+  }
+  const heading=detail.querySelector('h2');
+  if(!heading)return;
+  let nav=detail.querySelector('#clusterNavigation');
+  if(!nav){
+    nav=document.createElement('nav');nav.id='clusterNavigation';nav.className='cluster-navigation';nav.setAttribute('aria-label','Cluster navigation');
+    nav.innerHTML='<button type="button" data-direction="-1">← Previous cluster</button><span class="cluster-navigation-label" aria-live="polite"></span><button type="button" data-direction="1">Next cluster →</button>';
+    nav.querySelectorAll('button').forEach(button=>button.addEventListener('click',()=>navigateCluster(Number(button.dataset.direction))));
+    heading.after(nav);
+  }
+  const ids=visibleClusterIds(),index=ids.indexOf(selected);
+  const buttons=nav.querySelectorAll('button');
+  buttons[0].disabled=index<=0;
+  buttons[1].disabled=index<0||(!(index<ids.length-1)&&!hasNext);
+  const label=nav.querySelector('.cluster-navigation-label');
+  const text=index>=0?`${index+1} of ${ids.length}${hasNext&&index===ids.length-1?'+':''}`:'Cluster not in filtered list';
+  if(label.textContent!==text)label.textContent=text;
+}
+async function navigateCluster(direction){
+  const ids=visibleClusterIds(),index=ids.indexOf(selected),target=ids[index+direction];
+  if(target){await select(target);return}
+  if(direction>0&&index===ids.length-1&&hasNext){
+    const prior=new Set(ids);
+    await loadClustersPage(false);
+    const next=visibleClusterIds().find(id=>!prior.has(id));
+    if(next)await select(next);
+  }
+}
+new MutationObserver(updateClusterNavigation).observe(document.querySelector('#detail'),{childList:true,subtree:true});
+new MutationObserver(updateClusterNavigation).observe(document.querySelector('#list'),{childList:true,subtree:true});
+"""
+UNDO_LAST_ACTION_SCRIPT = r"""
+async function undoLastAction(){
+  try{
+    const latestResponse=await fetch('/api/undo/latest',{headers:{Accept:'application/json'}}),latest=await latestResponse.json();
+    if(!latestResponse.ok)throw new Error(latest.error||`Request failed (${latestResponse.status})`);
+    if(!latest.available){alert('There is no assignment or group addition to undo.');return}
+    const action=latest.action,kind=action.kind==='group'?'group assignment':'identity assignment and move';
+    if(!window.confirm(`Undo the last ${kind} for ${action.identity||'this item'} (${action.count} image(s))?`))return;
+    const response=await fetch('/api/undo/latest',{method:'POST'}),result=await response.json();
+    if(!response.ok)throw new Error(result.error||`Undo failed (${response.status})`);
+    lastMoveId=null;modalUndoMoveId=null;
+    if(result.kind==='move'){
+      const restored=result.restored_paths||(result.restored||[]).map(item=>item.destination);
+      for(const path of restored){if(path)currentClusterImageDecisions[path]={status:'pending'}}
+      if(!document.querySelector('#mediaModal')?.hidden){modalPaths=[...restored.filter(Boolean),...modalPaths.filter(path=>!restored.includes(path))];modalIndex=0}
+    }else{
+      for(const path of result.removed_paths||[]){
+        const names=(manualGroupMembershipsByPath[path]||[]).filter(name=>name!==result.identity);
+        if(names.length)manualGroupMembershipsByPath[path]=names;else delete manualGroupMembershipsByPath[path];
+      }
+    }
+    if(viewMode==='manual-groups'&&window.showView)await window.showView('manual-groups');
+    else if(selected)await select(selected);
+    if(!document.querySelector('#mediaModal')?.hidden)renderMediaModal();
+    const message=result.kind==='group'?`Removed ${result.removed_paths?.length||0} image(s) from ${result.identity}.`:`Restored ${result.restored_paths?.length||result.restored?.length||0} image(s) to the review collection.`;
+    const status=document.querySelector('.media-modal-status')||document.querySelector('#imageAssignTools p')||document.querySelector('#status');
+    if(status)status.textContent=message;else alert(message);
+    return result;
+  }catch(error){alert(error.message||'Undo failed');return null}
+}
+window.picorgUndoLatest=undoLastAction;
+undoLastMove=undoLastAction;
+undoModalMove=undoLastAction;
+const priorModalUndoUpdate=updateModalUndoControl;
+updateModalUndoControl=function(){priorModalUndoUpdate();document.querySelectorAll('.modal-undo').forEach(button=>button.disabled=false)};
+const priorUndoModalRender=renderMediaModal;
+renderMediaModal=function(){priorUndoModalRender();const button=document.querySelector('#mediaModalContent .modal-undo'),actions=document.querySelector('#mediaModalContent .modal-primary-actions');if(button){button.textContent='Undo last action';button.disabled=false;button.onclick=undoLastAction;if(actions&&!actions.contains(button))actions.append(button)}};
+function installGlobalUndoButton(){
+  if(document.querySelector('#globalUndoLastAction'))return;
+  const button=document.createElement('button');button.id='globalUndoLastAction';button.type='button';button.className='undo-last-action';button.textContent='Undo last action';button.title='Undo the most recent identity move or group assignment';button.onclick=undoLastAction;
+  const host=document.querySelector('.view-tabs')||document.querySelector('.side');
+  if(host){if(host.classList.contains('view-tabs'))host.append(button);else host.insertBefore(button,host.children[1]||null)}
+}
+installGlobalUndoButton();
+new MutationObserver(installGlobalUndoButton).observe(document.body,{childList:true,subtree:true});
+"""
+IDENTITY_PREVIEW_CSS = r"""
+#identityHoverPreview{position:fixed;z-index:10001;width:min(440px,calc(100vw - 24px));padding:10px;border:1px solid #60798a;border-radius:9px;background:#14212b;color:#edf5f8;box-shadow:0 8px 30px #000b;pointer-events:none}#identityHoverPreview[hidden]{display:none}.identity-hover-preview>strong{display:block;margin-bottom:7px;overflow-wrap:anywhere}.identity-hover-preview-images{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.identity-hover-preview-images img{width:100%;height:min(210px,32vh);object-fit:contain;background:#091117;border-radius:5px}
+#identityPreviewDialog{width:min(1000px,calc(100vw - 28px));max-width:none;max-height:calc(100dvh - 28px);padding:0;border:1px solid #526a7a;border-radius:12px;background:#14212b;color:#edf5f8;box-shadow:0 16px 60px #000b}
+#identityPreviewDialog:not([open]){display:none}#identityPreviewDialog[open]{display:grid;grid-template-rows:auto minmax(0,1fr)}#identityPreviewDialog::backdrop{background:#000b}
+.identity-preview-heading{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:12px;padding:14px 18px;background:#192a36;border-bottom:1px solid #405563}.identity-preview-heading h2{flex:1;margin:0;font-size:1.1rem}.identity-preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:10px;overflow:auto;padding:14px 16px 16px}.identity-preview-grid button{background:#1b2d39;color:inherit;border:1px solid #405563;border-radius:8px;padding:6px;cursor:zoom-in}.identity-preview-grid button:hover,.identity-preview-grid button:focus-visible{border-color:#92d8ef;outline:2px solid #92d8ef}.identity-preview-grid img{width:100%;height:150px;object-fit:contain;background:#091117;border-radius:4px}.identity-preview-open{font-size:12px;padding:4px 8px;margin-left:6px;white-space:nowrap}
+@media(max-width:520px){.identity-preview-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px}.identity-preview-grid img{height:120px}}
+"""
+MODAL_COMPACT_CONTROLS_CSS = r"""
+#mediaModalContent .media-modal-toolbar{gap:5px;padding:7px}
+#mediaModalContent .media-modal-toolbar .modal-control-group{gap:4px;padding:5px}
+#mediaModalContent .media-modal-toolbar :is(button,select,input,summary){min-width:0;min-height:28px;padding:3px 6px;font-size:12px;line-height:1.2}
+#mediaModalContent .media-modal-toolbar input,#mediaModalContent .media-modal-toolbar select{min-height:30px}
+#mediaModalContent .media-modal-toolbar .modal-primary-actions .approve{min-height:32px;padding:4px 8px;font-size:13px}
+#mediaModalContent .media-modal-toolbar .modal-primary-actions .modal-undo{min-height:28px}
+#mediaModalContent .media-modal-toolbar .modal-more-actions{gap:4px;margin-top:4px}
+#mediaModalContent .media-modal-toolbar .modal-recent-identities{gap:3px}
+#mediaModalContent .media-modal-toolbar .modal-recent-identities button{min-height:25px;padding:3px 5px;font-size:11px}
+#mediaModalContent .media-modal-toolbar .manual-group-modal{gap:4px;padding-top:4px}
+#mediaModalContent .media-modal-toolbar .manual-group-modal input,#mediaModalContent .media-modal-toolbar .manual-group-modal select{min-height:30px;padding:3px 6px}
+.recent-manual-group-buttons button{flex:0 1 auto;width:fit-content;align-self:flex-start}
+#mediaModalContent .recent-manual-group-buttons button{flex:0 1 auto;width:fit-content;align-self:flex-start}
+"""
+IDENTITY_PREVIEW_SCRIPT = r"""
+(()=>{
+  const dialog=document.createElement('dialog');dialog.id='identityPreviewDialog';dialog.className='identity-preview-dialog';dialog.setAttribute('aria-labelledby','identityPreviewTitle');
+  const heading=document.createElement('header');heading.className='identity-preview-heading';const title=document.createElement('h2');title.id='identityPreviewTitle';title.textContent='Sorted identity images';const count=document.createElement('span');const close=document.createElement('button');close.type='button';close.textContent='Close';close.setAttribute('aria-label','Close identity preview');heading.append(title,count,close);const grid=document.createElement('div');grid.className='identity-preview-grid';dialog.append(heading,grid);document.body.append(dialog);
+  function closePreview(){if(dialog.open)dialog.close()}
+  close.addEventListener('click',closePreview);dialog.addEventListener('close',()=>grid.replaceChildren());dialog.addEventListener('click',event=>{if(event.target===dialog)closePreview()});
+  async function showPreview(button){const picker=document.getElementById(button.dataset.picker),identity=picker?.value?.trim();if(!identity){alert('Choose a saved identity first');return}button.disabled=true;try{const response=await fetch('/api/identity-preview/'+encodeURIComponent(identity),{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);title.textContent=data.identity;count.textContent=`${data.count} sorted image${data.count===1?'':'s'} · showing ${data.paths.length}`;grid.replaceChildren();if(!data.paths.length){const empty=document.createElement('p');empty.className='related-identity-empty';empty.textContent='No sorted images found for this identity yet.';grid.append(empty)}for(const path of data.paths){const tile=document.createElement('button');tile.type='button';tile.title=path;const image=document.createElement('img');image.src='/media?path='+encodeURIComponent(path);image.alt='Sorted image for '+data.identity;image.loading='lazy';tile.append(image);tile.addEventListener('click',()=>{closePreview();const anchor=document.createElement('a');anchor.href='/media?path='+encodeURIComponent(path);anchor.append(image.cloneNode());openMediaModal({target:anchor,preventDefault(){}},anchor)});grid.append(tile)}dialog.showModal();close.focus()}catch(error){alert(error.message)}finally{button.disabled=false}}
+ function attachPreviewButtons(){for(const picker of [document.getElementById('identity'),document.getElementById('modalIdentity')]){if(!picker||picker.dataset.previewAttached==='1')continue;picker.dataset.previewAttached='1';const button=document.createElement('button');button.type='button';button.className='identity-preview-open';button.dataset.picker=picker.id;button.textContent='Preview sorted';button.setAttribute('aria-label','Preview images already sorted for selected identity');button.addEventListener('click',()=>showPreview(button));picker.after(button)}}
+ const observer=new MutationObserver(attachPreviewButtons);observer.observe(document.getElementById('detail'),{childList:true,subtree:true});observer.observe(document.body,{childList:true,subtree:true});attachPreviewButtons();
+})();
+"""
+IDENTITY_HOVER_PREVIEW_SCRIPT = r"""
+(()=>{
+  const cache=new Map(),popover=document.createElement('div');popover.id='identityHoverPreview';popover.className='identity-hover-preview';popover.setAttribute('role','tooltip');popover.setAttribute('aria-hidden','true');popover.hidden=true;document.body.append(popover);
+  let timer=null,active=null,request=0;
+  function decorate(){document.querySelectorAll('#recentIdentityList button,#modalRecentIdentityList button,#modalPinnedIdentities .modal-pinned-identity > button:not(.modal-unpin-identity),.related-identity-card').forEach(button=>{if(button.dataset.identityPreview)return;const name=button.matches('.related-identity-card')?button.querySelector('strong')?.textContent:button.textContent;if(name?.trim()){button.dataset.identityPreview=name.trim();button.setAttribute('aria-describedby','identityHoverPreview')}})}
+  function hide(){clearTimeout(timer);timer=null;active=null;request++;popover.hidden=true;popover.setAttribute('aria-hidden','true');popover.replaceChildren()}
+  function place(button){const r=button.getBoundingClientRect(),w=popover.offsetWidth,h=popover.offsetHeight;let left=Math.max(12,Math.min(window.innerWidth-w-12,r.left+(r.width-w)/2)),top=r.bottom+8;if(top+h>window.innerHeight-12)top=Math.max(12,r.top-h-8);popover.style.left=`${left}px`;popover.style.top=`${top}px`}
+  async function show(button){active=button;const id=++request,name=button.dataset.identityPreview;let paths=cache.get(name);if(!paths){try{const response=await fetch('/api/identity-preview/'+encodeURIComponent(name),{headers:{Accept:'application/json'}});if(!response.ok)return;const data=await response.json();paths=(data.paths||[]).slice(0,2);if(paths.length)cache.set(name,paths)}catch(_){return}}if(active!==button||id!==request||!paths?.length)return;popover.replaceChildren();const label=document.createElement('strong');label.textContent=name;popover.append(label);const row=document.createElement('div');row.className='identity-hover-preview-images';for(const path of paths){const image=document.createElement('img');image.src='/media?path='+encodeURIComponent(path);image.alt=`Example image for ${name}`;image.loading='eager';row.append(image)}popover.append(row);popover.hidden=false;popover.setAttribute('aria-hidden','false');place(button)}
+  function schedule(button){if(!button?.dataset.identityPreview)return;clearTimeout(timer);active=button;timer=setTimeout(()=>show(button),1800)}
+  document.addEventListener('pointerover',event=>{const button=event.target.closest?.('[data-identity-preview]');if(button&&!button.contains(event.relatedTarget))schedule(button)});
+  document.addEventListener('pointerout',event=>{const button=event.target.closest?.('[data-identity-preview]');if(button&&!button.contains(event.relatedTarget))hide()});
+  document.addEventListener('focusin',event=>schedule(event.target.closest?.('[data-identity-preview]')));document.addEventListener('focusout',event=>{if(event.target.closest?.('[data-identity-preview]'))hide()});
+  window.addEventListener('scroll',hide,true);window.addEventListener('resize',hide);new MutationObserver(decorate).observe(document.body,{childList:true,subtree:true});decorate();
+})();
+"""
+HTML_PAGE = HTML_PAGE.replace("</script>", CLUSTER_NAVIGATION_SCRIPT + "\n" + UNDO_LAST_ACTION_SCRIPT + "\n" + IDENTITY_HOVER_PREVIEW_SCRIPT + "\n" + IDENTITY_PREVIEW_SCRIPT + "init();</script>", 1)
+HTML_PAGE = HTML_PAGE.replace("</style>", MODAL_COMPACT_CONTROLS_CSS + "</style>", 1)
+if "</style>" not in HTML_PAGE:
+    HTML_PAGE = HTML_PAGE.replace("</head>", "</style></head>", 1)
+HTML_PAGE = HTML_PAGE.replace("</style>", IDENTITY_PREVIEW_CSS + MODAL_COMPACT_CONTROLS_CSS + "</style>", 1)
+
+IDENTITY_RECONCILIATION_PAGE = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Identity registry review · PicOrg</title>
+<style>
+:root{color-scheme:dark;font:15px/1.45 system-ui,sans-serif;background:#101820;color:#eaf1f5}*{box-sizing:border-box}body{margin:0;padding:18px;max-width:1500px;margin-inline:auto}header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}h1{font-size:1.35rem;margin:0;flex:1}button,input,select{font:inherit;color:inherit;background:#1c2c38;border:1px solid #526879;border-radius:6px;padding:7px 10px}button{cursor:pointer}button:hover,button:focus-visible{border-color:#93d7ed;outline:2px solid #93d7ed}a{color:#a8dff2}.notice{padding:10px 12px;border-left:4px solid #e2b758;background:#2b281e;margin:12px 0}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.toolbar input{flex:1;min-width:220px}.toolbar select{min-width:185px}.summary{color:#b7cad4;margin:10px 0}.cards{display:grid;gap:10px}.card{border:1px solid #405663;border-radius:9px;padding:12px;background:#172630}.card h2{font-size:1.05rem;margin:0 0 3px;overflow-wrap:anywhere}.aliases,.notes,.candidate-meta{color:#b6c6cf;font-size:.9rem;overflow-wrap:anywhere}.candidate-search{width:100%;margin:10px 0 6px}.suggestions{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr));gap:6px}.suggestion{text-align:left;display:grid;gap:3px}.suggestion.selected{border-color:#8fcf9d;outline:1px solid #8fcf9d}.controls{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.controls input{flex:1;min-width:180px}.primary{background:#274559}.status{margin-top:8px;color:#a7d8b0}.decision{margin-top:8px;padding:7px;border-radius:5px;background:#202f39;color:#cddce4}.empty{padding:22px;text-align:center;color:#b7cad4}@media(max-width:600px){body{padding:10px}.suggestions{grid-template-columns:1fr}}
+</style></head><body>
+<header><h1>Manual identity reconciliation</h1><a href="/">Back to PicOrg</a><button id="export" type="button">Download review manifest</button></header>
+<div class="notice"><strong>Name matches are suggestions only.</strong> Confirm a link or a genuinely new identity below. Decisions are saved to a PicOrg review file for the registry owner; this page does not edit the local or shared registry.</div>
+<div class="toolbar"><input id="filter" type="search" placeholder="Filter manual identities, aliases, or notes"><select id="state"><option value="all">All candidates</option><option value="unreviewed">Unreviewed</option><option value="ready_for_registry_owner">Confirmed for registry owner</option><option value="deferred">Deferred</option></select><button id="reload" type="button">Refresh</button></div><div id="summary" class="summary">Loading registry candidates…</div><main id="cards" class="cards"></main>
+<script>
+(()=>{
+const cards=document.getElementById('cards'),summary=document.getElementById('summary'),filter=document.getElementById('filter'),state=document.getElementById('state');let data={manual_entries:[],shared_identities:[],decisions:{}};
+const norm=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase().replace(/[^a-z0-9]+/g,'');
+const names=item=>[item.id,item.primary_folder,...(item.display_names||[]),...(item.aliases||[])].filter(Boolean);
+function score(source,target){const q=norm(source),targets=names(target).map(norm).filter(Boolean);if(!q)return 0;let best=0;for(const value of targets){if(value===q)best=Math.max(best,1);else if(value.includes(q)||q.includes(value))best=Math.max(best,.78*Math.min(value.length,q.length)/Math.max(value.length,q.length));const a=new Set(q.match(/[a-z0-9]{2,}/g)||[]),b=new Set(value.match(/[a-z0-9]{2,}/g)||[]);if(a.size&&b.size){let n=0;for(const t of a)if(b.has(t))n++;best=Math.max(best,.55*n/(a.size+b.size-n))}}return best}
+function text(tag,value,cls){const node=document.createElement(tag);node.textContent=value||'';if(cls)node.className=cls;return node}
+async function save(source,action,extra){const response=await fetch('/api/identity-reconciliation',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({source,action,...extra})});const result=await response.json();if(!response.ok)throw new Error(result.error||`Save failed (${response.status})`);data.decisions[source]=result.decision;render()}
+function render(){const query=norm(filter.value),status=state.value;const rows=data.manual_entries.filter(item=>{const d=item.decision||data.decisions[item.canonical];const s=d?.status||'unreviewed';return(!query||norm([item.canonical,...item.aliases,item.notes].join(' ')).includes(query))&&(status==='all'||s===status||status==='unreviewed'&&!d)});const decided=Object.values(data.decisions).filter(item=>item?.status==='ready_for_registry_owner').length;summary.textContent=`${rows.length} shown · ${data.manual_entries.length} unmatched manual entries · ${data.shared_identities.length} confirmed shared identities · ${decided} decisions ready for registry-owner review`;cards.replaceChildren();if(!rows.length){cards.append(text('div','No candidates match this filter.','empty'));return}for(const item of rows)cards.append(renderCard(item))}
+function renderCard(item){const card=document.createElement('section');card.className='card';card.append(text('h2',item.canonical));if(item.aliases.length)card.append(text('div','Local aliases: '+item.aliases.join(', '),'aliases'));if(item.notes)card.append(text('div','Notes: '+item.notes,'notes'));const decision=data.decisions[item.canonical]||item.decision;if(decision){const detail=decision.action==='link'?`Linked to ${decision.target}`:decision.action==='new'?`Proposed new identity ${decision.proposed_id}`:'Left unresolved';card.append(text('div',`${decision.status}: ${detail}`, 'decision'))}
+ const search=document.createElement('input');search.className='candidate-search';search.type='search';search.placeholder='Search confirmed shared identities';search.setAttribute('aria-label',`Search shared identities for ${item.canonical}`);const suggestions=document.createElement('div');suggestions.className='suggestions';const actions=document.createElement('div');actions.className='controls';const proposed=document.createElement('input');proposed.value=item.canonical;proposed.setAttribute('aria-label',`Proposed new shared identity for ${item.canonical}`);const makeNew=document.createElement('button');makeNew.textContent='Confirm as genuinely new';makeNew.title='Save a proposal for the shared registry owner; does not create the identity';makeNew.onclick=async()=>{if(!window.confirm(`Record ${proposed.value.trim()} as a proposed new shared identity?`))return;try{await save(item.canonical,'new',{proposed_id:proposed.value.trim()})}catch(error){alert(error.message)}};const defer=document.createElement('button');defer.textContent='Leave unresolved';defer.onclick=async()=>{try{await save(item.canonical,'defer',{})}catch(error){alert(error.message)}};actions.append(proposed,makeNew,defer);let selected=null;
+ function showSuggestions(){const query=search.value.trim(),needle=norm(query||item.canonical);suggestions.replaceChildren();const matches=data.shared_identities.map(target=>({target,score:Math.max(score(item.canonical,target),query?score(query,target):0)})).filter(row=>query?names(row.target).some(name=>norm(name).includes(needle))||row.score>=.22:row.score>=.12).sort((a,b)=>b.score-a.score||a.target.id.localeCompare(b.target.id)).slice(0,8);for(const {target,score:value} of matches){const b=document.createElement('button');b.type='button';b.className='suggestion'+(selected?.id===target.id?' selected':'');b.append(text('strong',target.id));const metadata=[target.primary_folder,...target.display_names.slice(0,4),...target.sources.slice(0,3)].filter(Boolean);b.append(text('span',metadata.join(' · '),'candidate-meta'));b.append(text('small',`Name similarity hint · ${Math.round(value*100)}% · not identity evidence`,'candidate-meta'));b.onclick=()=>{selected=target;showSuggestions()};suggestions.append(b)}if(!matches.length)suggestions.append(text('div','No name-based suggestions. Search by a known alias or leave unresolved.','empty'));if(selected){const confirmLink=document.createElement('button');confirmLink.type='button';confirmLink.className='primary';confirmLink.textContent=`Confirm link to ${selected.id}`;confirmLink.onclick=async()=>{if(!window.confirm(`Record ${item.canonical} → ${selected.id} for registry-owner review?`))return;try{await save(item.canonical,'link',{target:selected.id})}catch(error){alert(error.message)}};suggestions.append(confirmLink)}}
+ search.addEventListener('input',()=>{selected=null;showSuggestions()});showSuggestions();card.append(search,suggestions,actions);return card}
+async function load(){summary.textContent='Loading registry candidates…';try{const response=await fetch('/api/identity-reconciliation',{headers:{Accept:'application/json'},cache:'no-store'});data=await response.json();if(!response.ok)throw new Error(data.error||`Load failed (${response.status})`);render()}catch(error){cards.replaceChildren(text('p',error.message,'empty'));summary.textContent='Unable to load candidates'}}
+filter.addEventListener('input',render);state.addEventListener('change',render);document.getElementById('reload').onclick=load;document.getElementById('export').onclick=async()=>{try{const response=await fetch('/api/identity-reconciliation',{headers:{Accept:'application/json'}});const payload=await response.json();if(!response.ok)throw new Error(payload.error||'Export failed');const blob=new Blob([JSON.stringify({schema_version:1,generated_at:new Date().toISOString(),manual_entries:payload.manual_entries.map(({canonical,aliases,notes})=>({canonical,aliases,notes})),decisions:payload.decisions},null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='picorg-identity-reconciliation-review.json';a.click();URL.revokeObjectURL(url)}catch(error){alert(error.message)}};load();
+})();
+</script></body></html>"""
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)

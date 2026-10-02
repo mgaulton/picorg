@@ -367,6 +367,7 @@ def cluster_embeddings(
             cluster["paths"].append(path)
             if similarity_threshold is not None:
                 cluster["min_similarity"] = min(float(cluster.get("min_similarity", 1.0)), best_similarity)
+                cluster.setdefault("member_link_scores", {})[path] = best_similarity
             if len(cluster["representatives"]) < max_representatives:
                 cluster["representatives"].append(list(vector if np is not None else embedding))
                 if np is not None:
@@ -382,7 +383,7 @@ def cluster_embeddings(
                     expanded[: len(clusters)] = representative_matrix[: len(clusters)]
                 representative_matrix = expanded
                 representative_capacity = new_capacity
-            clusters.append({"paths": [path], "representatives": [list(vector if np is not None else embedding)], **({"min_similarity": 1.0} if similarity_threshold is not None else {})})
+            clusters.append({"paths": [path], "representatives": [list(vector if np is not None else embedding)], **({"min_similarity": 1.0, "member_link_scores": {}} if similarity_threshold is not None else {})})
             member_vectors.append([list(vector if np is not None else embedding)] if strict_all_members else [])
             if np is not None:
                 representative_matrix[len(clusters) - 1] = vector
@@ -399,6 +400,7 @@ def cluster_embeddings(
                 "count": len(paths),
                 "sample_paths": paths[:12],
                 **({"min_similarity": round(float(cluster["min_similarity"]), 6)} if similarity_threshold is not None else {}),
+                **({"member_link_scores": {path: round(float(score), 6) for path, score in cluster.get("member_link_scores", {}).items()}} if similarity_threshold is not None else {}),
             }
         )
     return output
@@ -792,7 +794,7 @@ def main() -> int:
     except ValueError as exc:
         parser.error(str(exc))
     results = [
-        {"path": path, "title": cluster["cluster_label"], "canonical": None, "source_root": str(Path(path).parent), "face_cluster_id": cluster["cluster_id"], "cluster_label": cluster["cluster_label"]}
+        {"path": path, "title": cluster["cluster_label"], "canonical": None, "source_root": str(Path(path).parent), "face_cluster_id": cluster["cluster_id"], "cluster_label": cluster["cluster_label"], **({"face_link_similarity": cluster["member_link_scores"][path]} if path in cluster.get("member_link_scores", {}) else {})}
         for cluster in clusters
         for path in cluster["paths"]
     ]

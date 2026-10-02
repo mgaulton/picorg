@@ -51,7 +51,7 @@ DEFAULT_AUDIT_ROOT = DEFAULT_TEMP_ROOT / "picorg_sorted_audit"
 DEFAULT_CACHE_ROOT = Path(os.environ.get("PICORG_CACHE_ROOT", "/opt/picorg/.cache/picorg"))
 DEFAULT_CATALOG_CACHE = DEFAULT_CACHE_ROOT / "identity_catalog_cache.json"
 DEFAULT_DRY_RUN_CACHE = DEFAULT_CACHE_ROOT / "dry_run_cache.json"
-DEFAULT_RESOLVER_VERSION = "2026-07-31.27"
+DEFAULT_RESOLVER_VERSION = "2026-09-30.1"
 DEFAULT_OCR_TIMEOUT_SECONDS = 20
 DEFAULT_OCR_TRIGGER_CONFIDENCE = 0.85
 DEFAULT_APPLY_MIN_CONFIDENCE = 0.95
@@ -67,6 +67,7 @@ METADAILY_IDENTITY_ALIASES_FILE = Path(
     os.environ.get("PICORG_IDENTITY_REGISTRY", "/opt/shared/identity_aliases.json")
 )
 PROFILE_VERIFICATION_FILE = Path("/opt/picorg/identity_profile_verification.json")
+PICORG_REVIEW_IDENTITIES_FILE = Path("/opt/picorg/review_identities.json")
 PROFILE_IMAGE_INDEX_FILE = Path(
     os.environ.get("PICORG_PROFILE_IMAGE_INDEX", "/opt/picorg/.profile_image_index.disabled")
 )
@@ -146,6 +147,7 @@ IGNORED_DIR_NAMES = {
 
 # Used when resolving ambiguous exact alias hits during matching.
 FAMILY_PRIORITY = {
+    "linked": 100,
     "redditdaily": 50,
     "metadaily": 45,
     "profile_verified": 44,
@@ -160,6 +162,7 @@ FAMILY_PRIORITY = {
 # Used when merging catalog entries that share a normalized canonical key.
 # Manual/review overlays and Metadaily beat redditdaily; redditdaily beats weak imports.
 CATALOG_MERGE_PRIORITY = {
+    "linked": 120,
     "manual": 100,
     "review": 95,
     "metadaily": 90,
@@ -263,6 +266,8 @@ class Identity:
     canonical: str
     family: str
     aliases: Tuple[str, ...]
+    source_aliases: Tuple[Tuple[str, Tuple[str, ...]], ...] = ()
+    provenance: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -338,6 +343,7 @@ def catalog_source_state() -> Dict[str, object]:
         METADAILY_ACCOUNTS_FILE,
         METADAILY_IDENTITY_ALIASES_FILE,
         PROFILE_VERIFICATION_FILE,
+        PICORG_REVIEW_IDENTITIES_FILE,
         PROFILE_IMAGE_INDEX_FILE,
     ]
     files.extend(STRONG_TEXT_SOURCE_FILES)
@@ -422,7 +428,14 @@ def load_cached_catalog(cache_file: Path, current_state: Dict[str, object]) -> O
                 if str(alias).strip() and str(alias).strip() != canonical
             )
         )
-        identities.append(Identity(canonical=canonical, family=family, aliases=aliases))
+        source_aliases_raw = item.get("source_aliases") or []
+        source_aliases = tuple(
+            (str(entry[0]), tuple(str(value) for value in entry[1]))
+            for entry in source_aliases_raw
+            if isinstance(entry, list) and len(entry) == 2 and isinstance(entry[1], list)
+        ) if isinstance(source_aliases_raw, list) else ()
+        provenance = tuple(str(value) for value in item.get("provenance", []) if str(value))
+        identities.append(Identity(canonical=canonical, family=family, aliases=aliases, source_aliases=source_aliases, provenance=provenance))
     preferred_alias_targets = {
         normalize_key(alias): normalize_key(target)
         for alias, target in (payload.get("preferred_alias_targets") or {}).items()
@@ -464,6 +477,8 @@ def write_catalog_cache(
                 "canonical": identity.canonical,
                 "family": identity.family,
                 "aliases": list(identity.aliases),
+                "source_aliases": [[source, list(values)] for source, values in identity.source_aliases],
+                "provenance": list(identity.provenance),
             }
             for identity in catalog
         ],
@@ -763,6 +778,8 @@ def load_identity_catalog() -> Tuple[
     alias_index: Dict[str, Set[Identity]] = defaultdict(set)
     canonical_index: Dict[str, Identity] = {}
     canonical_by_key: Dict[str, str] = {}
+    linked_canonical_by_key: Dict[str, str] = {}
+    ambiguous_registry_aliases: Set[str] = set()
     token_index: Dict[str, Set[Identity]] = defaultdict(set)
     global PROJECT_BLOCKED_TOKENS, PROJECT_AMBIGUOUS_TOKENS
     PROJECT_BLOCKED_TOKENS = set()
@@ -805,10 +822,17 @@ def load_identity_catalog() -> Tuple[
         aliases: Iterable[str],
         *,
         source_kind: str = "strong",
+        source_aliases: Tuple[Tuple[str, Tuple[str, ...]], ...] = (),
+        provenance: Tuple[str, ...] = (),
     ) -> None:
         canonical = canonical.strip()
         if not canonical:
             return
+        linked_target = preferred_alias_targets.get(normalize_key(canonical))
+        linked_canonical = linked_canonical_by_key.get(linked_target) if linked_target else None
+        if linked_canonical:
+            canonical = linked_canonical
+            family = "linked"
         if source_kind != "registry" and is_generic_identity_token(canonical):
             return
         if source_kind == "weak" and not should_import_weak_identity(canonical, aliases):
@@ -836,7 +860,12 @@ def load_identity_catalog() -> Tuple[
                 merged_aliases = tuple(dict.fromkeys((*merged_aliases, existing.canonical)))
             if canonical != kept_canonical and canonical not in merged_aliases:
                 merged_aliases = tuple(dict.fromkeys((*merged_aliases, canonical)))
-            ident = Identity(canonical=kept_canonical, family=kept_family, aliases=merged_aliases)
+            merged_source_aliases = dict(existing.source_aliases)
+            for source, values in source_aliases:
+                merged_source_aliases[source] = tuple(dict.fromkeys((*merged_source_aliases.get(source, ()), *values)))
+            merged_provenance = tuple(dict.fromkeys((*existing.provenance, *provenance)))
+            ident = Identity(canonical=kept_canonical, family=kept_family, aliases=merged_aliases,
+                             source_aliases=tuple(sorted(merged_source_aliases.items())), provenance=merged_provenance)
             if existing_name != kept_canonical:
                 canonical_index.pop(existing_name, None)
             canonical_index[kept_canonical] = ident
@@ -844,7 +873,8 @@ def load_identity_catalog() -> Tuple[
             identities[identities.index(existing)] = ident
         else:
             filtered_aliases = filter_aliases(canonical, incoming_aliases, source_kind=source_kind)
-            ident = Identity(canonical=canonical, family=family, aliases=filtered_aliases)
+            ident = Identity(canonical=canonical, family=family, aliases=filtered_aliases,
+                             source_aliases=source_aliases, provenance=provenance)
             canonical_index[canonical] = ident
             canonical_by_key[key] = canonical
             identities.append(ident)
@@ -875,7 +905,21 @@ def load_identity_catalog() -> Tuple[
             family = str(entry.get("family", family_default)).strip() or family_default
             aliases = entry.get("aliases") or []
             alias_values = {canonical, *[str(alias).strip() for alias in aliases if str(alias).strip()]}
-            add_identity(canonical, family, alias_values, source_kind="registry")
+            source_aliases = []
+            configured_sources = entry.get("source_aliases") or {}
+            if isinstance(configured_sources, dict):
+                for source, values in configured_sources.items():
+                    clean_values = tuple(dict.fromkeys(
+                        str(value).strip()
+                        for value in (values if isinstance(values, list) else [values])
+                        if str(value).strip()
+                    ))
+                    if clean_values:
+                        alias_values.update(clean_values)
+                        source_aliases.append((str(source), clean_values))
+            provenance = tuple(str(value).strip() for value in (entry.get("provenance") or []) if str(value).strip())
+            add_identity(canonical, family, alias_values, source_kind="registry",
+                         source_aliases=tuple(source_aliases), provenance=provenance)
 
     def add_directory_identities(root: Path, family: str) -> None:
         try:
@@ -969,10 +1013,16 @@ def load_identity_catalog() -> Tuple[
         for item in identity_payload.get("identities", []) if isinstance(identity_payload, dict) else []:
             if not isinstance(item, dict) or item.get("status") != "confirmed":
                 continue
-            canonical = str(item.get("primary_folder") or item.get("id") or "").strip()
+            # The shared registry's id is the cross-platform canonical name.
+            # primary_folder remains an alias identifying the MetaDaily tree.
+            canonical = str(item.get("id") or item.get("primary_folder") or "").strip()
+            primary_folder = str(item.get("primary_folder") or "").strip()
             aliases = set()
             is_aggregate = "aggregate identity" in str(item.get("notes", "")).lower()
-            alias_keys = ("id", "primary_folder")
+            source_aliases = []
+            if primary_folder:
+                source_aliases.append(("metadaily", (primary_folder,)))
+            alias_keys = ("primary_folder",)
             if not is_aggregate:
                 alias_keys += ("display_names", "search_terms")
             for key in alias_keys:
@@ -986,9 +1036,80 @@ def load_identity_catalog() -> Tuple[
                 for key in ("users", "subreddits"):
                     values = reddit.get(key) or []
                     if isinstance(values, list):
-                        aliases.update(str(entry).strip() for entry in values if str(entry).strip())
+                        clean_values = tuple(dict.fromkeys(str(entry).strip() for entry in values if str(entry).strip()))
+                        aliases.update(clean_values)
+                        if clean_values:
+                            source_aliases.append((f"reddit_{key}", clean_values))
+            collection_sources = item.get("metadaily_collection_sources")
+            if not is_aggregate and isinstance(collection_sources, list):
+                for source in collection_sources:
+                    if not isinstance(source, dict) or source.get("enabled") is not True or source.get("legacy_disabled") is True:
+                        continue
+                    platform = str(source.get("platform") or "unknown").strip().casefold()
+                    source_values = tuple(dict.fromkeys(
+                        str(source.get(key)).strip()
+                        for key in ("clean_identifier", "identifier")
+                        if source.get(key) and str(source.get(key)).strip()
+                    ))
+                    if source_values:
+                        aliases.update(source_values)
+                        source_aliases.append((f"metadaily_collection_{platform}", source_values))
+            metadaily_group = str(item.get("metadaily_user_group") or "").strip()
+            if metadaily_group:
+                aliases.add(metadaily_group)
+                source_aliases.append(("metadaily_user_group", (metadaily_group,)))
             if canonical:
-                add_identity(canonical, "metadaily", aliases, source_kind="strong")
+                # Route every source spelling encountered later to this shared
+                # canonical id, while leaving source databases and folders intact.
+                target_key = normalize_key(canonical)
+                linked_canonical_by_key[target_key] = canonical
+                candidate_keys = {normalize_key(value) for value in aliases | {primary_folder, canonical} if normalize_key(value)}
+                for alias_key in candidate_keys:
+                    if alias_key in ambiguous_registry_aliases:
+                        continue
+                    previous = preferred_alias_targets.get(alias_key)
+                    if previous is None or previous == target_key:
+                        preferred_alias_targets[alias_key] = target_key
+                    else:
+                        preferred_alias_targets.pop(alias_key, None)
+                        ambiguous_registry_aliases.add(alias_key)
+                existing_matches = {
+                    existing
+                    for alias_key in candidate_keys
+                    for existing in alias_index.get(alias_key, set())
+                }
+                for existing in existing_matches:
+                    add_identity(existing.canonical, "linked", existing.aliases, source_kind="registry")
+                add_identity(canonical, "linked", aliases, source_kind="registry",
+                             source_aliases=tuple(source_aliases),
+                             provenance=tuple(str(value) for value in item.get("sources", []) if str(value)))
+
+    # UI-approved identities are an explicit local source and must resolve the
+    # same folders shown by the reviewer. Shared IDs above take precedence
+    # whenever a review alias has already been linked.
+    if PICORG_REVIEW_IDENTITIES_FILE.exists():
+        try:
+            review_payload = json.loads(PICORG_REVIEW_IDENTITIES_FILE.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            review_payload = {}
+        review_decisions = review_payload.get("decisions", []) if isinstance(review_payload, dict) else []
+        for item in review_decisions if isinstance(review_decisions, list) else []:
+            if not isinstance(item, dict):
+                continue
+            canonical = str(item.get("identity") or "").strip()
+            if not canonical:
+                continue
+            aliases = {canonical}
+            cluster_id = str(item.get("cluster_id") or "").strip()
+            if cluster_id:
+                aliases.add(cluster_id)
+            values = item.get("aliases") or []
+            if isinstance(values, list):
+                aliases.update(str(value).strip() for value in values if str(value).strip())
+            family = str(item.get("family") or "review").strip() or "review"
+            add_identity(canonical, family, aliases, source_kind="registry",
+                         source_aliases=(("picorg_review", tuple(sorted(aliases))),),
+                         provenance=("picorg_review",))
 
     if FRIENDS_FILE.exists():
         for line in FRIENDS_FILE.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -1060,7 +1181,12 @@ def load_identity_catalog() -> Tuple[
                 if alias and alias != kept_canonical
             )
         )
-        updated = Identity(canonical=kept_canonical, family=kept_family, aliases=merged_aliases)
+        merged_source_aliases = dict(target.source_aliases)
+        for source, values in source.source_aliases:
+            merged_source_aliases[source] = tuple(dict.fromkeys((*merged_source_aliases.get(source, ()), *values)))
+        updated = Identity(canonical=kept_canonical, family=kept_family, aliases=merged_aliases,
+                           source_aliases=tuple(sorted(merged_source_aliases.items())),
+                           provenance=tuple(dict.fromkeys((*target.provenance, *source.provenance))))
         drop_names = {source.canonical, target.canonical}
         identities[:] = [item for item in identities if item.canonical not in drop_names]
         for name in drop_names:
@@ -1085,7 +1211,8 @@ def load_identity_catalog() -> Tuple[
             extra_aliases.add(norm)
         if extra_aliases:
             merged = tuple(dict.fromkeys((*ident.aliases, *sorted(extra_aliases))))
-            updated = Identity(canonical=ident.canonical, family=ident.family, aliases=merged)
+            updated = Identity(canonical=ident.canonical, family=ident.family, aliases=merged,
+                               source_aliases=ident.source_aliases, provenance=ident.provenance)
             canonical_index[ident.canonical] = updated
             identities[identities.index(ident)] = updated
 
@@ -1398,7 +1525,12 @@ def best_identity_match(
             exact_key == exact_gallery_key
             and any(identity.family == "manual" for identity in exact_hits)
         )
-        if exact_key in PROJECT_AMBIGUOUS_TOKENS or (len(exact_key) < 10 and not exact_manual_gallery_hit):
+        exact_numeric_identity_hit = len(exact_hits) == 1 and any(char.isdigit() for char in exact_key)
+        if exact_key in PROJECT_AMBIGUOUS_TOKENS or (
+            len(exact_key) < 10
+            and not exact_manual_gallery_hit
+            and not exact_numeric_identity_hit
+        ):
             continue
         if exact_key in PROJECT_BLOCKED_TOKENS and not exact_hits:
             continue
@@ -2097,6 +2229,8 @@ def folder_signature(dir_results: List[MatchResult]) -> str:
 
 def destination_for(identity: Identity, dest_root: Path = DEST_ROOT) -> Path:
     family = identity.family
+    if family == "linked":
+        return dest_root / identity.canonical
     if family in {"reddit_subreddit", "reddit_follow"}:
         family = "redditdaily"
     return dest_root / family / identity.canonical
@@ -2315,6 +2449,100 @@ def export_manifest(catalog: List[Identity], output: Path) -> None:
     output.write_text(json.dumps(grouped, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def export_consolidation_manifest(
+    source_root: Path,
+    output: Path,
+    catalog: Sequence[Identity],
+    alias_index: Dict[str, Set[Identity]],
+    dest_root: Path,
+) -> Dict[str, int]:
+    """Describe linked-identity paths in a PicOrg sorted tree; never move media."""
+    known_identities = {item.canonical: item for item in catalog}
+    rows: List[Dict[str, object]] = []
+    target_sources: Dict[str, List[int]] = defaultdict(list)
+    if source_root.exists():
+        for current, dirs, files in os.walk(source_root, followlinks=False):
+            dirs[:] = [name for name in dirs if not (Path(current) / name).is_symlink()]
+            current_path = Path(current)
+            for name in files:
+                source = current_path / name
+                if not is_media_file(source):
+                    continue
+                identity: Optional[Identity] = None
+                try:
+                    relative_parts = source.relative_to(source_root).parts[:-1]
+                except ValueError:
+                    relative_parts = ()
+                for part in reversed(relative_parts):
+                    hits = list(alias_index.get(normalize_key(part), set()))
+                    linked_hits = [item for item in hits if item.family == "linked"]
+                    candidates = linked_hits if linked_hits else hits
+                    unique = {item.canonical: item for item in candidates}
+                    if len(unique) == 1:
+                        identity = next(iter(unique.values()))
+                        break
+                    if len(unique) > 1:
+                        break
+                target = dest_root / identity.canonical / source.name if identity else None
+                status = "unresolved_identity" if identity is None else (
+                    "proposed" if identity.family == "linked" else "proposed_local_identity"
+                )
+                if target is not None and target == source:
+                    status = "already_consolidated"
+                elif target is not None and target.exists():
+                    status = "destination_exists"
+                row = {
+                    "source": str(source),
+                    "target": str(target) if target else None,
+                    "identity_id": identity.canonical if identity else None,
+                    "identity_family": identity.family if identity else None,
+                    "source_aliases": {source_name: list(values) for source_name, values in identity.source_aliases} if identity else {},
+                    "provenance": list(identity.provenance) if identity else [],
+                    "source_family": relative_parts[0] if relative_parts else None,
+                    "status": status,
+                    "size_bytes": source.stat().st_size,
+                }
+                rows.append(row)
+                if target is not None:
+                    target_sources[str(target)].append(len(rows) - 1)
+    for indices in target_sources.values():
+        if len(indices) < 2:
+            continue
+        hashes: Dict[str, List[int]] = defaultdict(list)
+        for index in indices:
+            try:
+                digest = file_sha256(Path(str(rows[index]["source"])))
+            except OSError:
+                rows[index]["status"] = "collision_unverified"
+                continue
+            rows[index]["sha256"] = digest
+            hashes[digest].append(index)
+        exact_duplicate = len(hashes) == 1 and sum(len(group) for group in hashes.values()) == len(indices)
+        for digest, group in hashes.items():
+            for index in group:
+                target = Path(str(rows[index]["target"]))
+                hashed_target = target.with_name(f"{target.stem}__{digest[:12]}{target.suffix}")
+                rows[index]["target"] = str(hashed_target)
+                rows[index]["status"] = "exact_content_duplicate" if exact_duplicate else "collision_renamed"
+    counts: Dict[str, int] = defaultdict(int)
+    for row in rows:
+        counts[str(row["status"])] += 1
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({
+        "schema_version": 1,
+        "mode": "report_only",
+        "source_root": str(source_root),
+        "destination_root": str(dest_root),
+        "registry": str(METADAILY_IDENTITY_ALIASES_FILE),
+        "identity_count": len(known_identities),
+        "linked_identity_count": sum(1 for item in known_identities.values() if item.family == "linked"),
+        "media_count": len(rows),
+        "status_counts": dict(sorted(counts.items())),
+        "items": rows,
+    }, indent=2, sort_keys=True), encoding="utf-8")
+    return dict(counts)
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Deterministic mixed media organizer")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2336,6 +2564,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     manifest = sub.add_parser("manifest", help="Export the identity manifest as JSON")
     manifest.add_argument("--output", type=Path, required=True)
 
+    consolidation = sub.add_parser("consolidation-manifest", help="Write a report-only linked-identity consolidation plan")
+    consolidation.add_argument("--root", type=Path, default=DEST_ROOT, help="Existing PicOrg sorted review tree to inventory")
+    consolidation.add_argument("--dest-root", type=Path, default=DEST_ROOT, help="Proposed common-identity holding root")
+    consolidation.add_argument("--output", type=Path, required=True)
+
     inspect = sub.add_parser("inspect", help="Print a compact catalog summary")
     inspect.add_argument("--limit", type=int, default=60)
 
@@ -2351,6 +2584,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.command == "manifest":
         export_manifest(catalog, args.output)
         print(args.output)
+        return 0
+
+    if args.command == "consolidation-manifest":
+        counts = export_consolidation_manifest(args.root, args.output, catalog, alias_index, args.dest_root)
+        print(json.dumps({"output": str(args.output), "status_counts": counts}, sort_keys=True))
         return 0
 
     if args.command == "inspect":

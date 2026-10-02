@@ -11,6 +11,7 @@ Deterministic organizer for mixed Reddit media intake.
 - Uses Reddit context when available: subreddit, author, title, filename, and aliases.
 - On apply, intact source folders are moved where possible, identical folder content is routed to `duplicates/`, and same-name collisions get a hashed filename.
 - Uses a repo-local overlay registry in [`project_registry.json`](/opt/picorg/project_registry.json) for project-only aliases and blocked generic tokens.
+- Supports manual visual collections (for example, `gothgroup` or `redheadgroup`) separately from identities. Select individual images in a cluster or add the current image from the model viewer; membership is stored in `manual_groups.json`. Collection membership creates no face markers and does not move media; individual identity matches remain authoritative for organization.
 - `run_picorg.sh` is the recommended one-command baseline: it refreshes intake, runs hash-priority dedupe, creates the PicOrg audit, performs face grouping, and starts the LAN review UI. The default does not move library files.
 - `/mnt/elements16a/Pron/metadaily/downloads` and `/mnt/elements16a/Pron/redditdaily/downloads` are permanently separate protected download stores. They may be read for identity/profile references, but ingest, dedupe, and PicOrg apply never move or modify them.
 
@@ -422,6 +423,19 @@ Export manifest:
 ```bash
 python3 picorg_sorter.py manifest --output /tmp/picorg-manifest.json
 ```
+
+Write a report-only proposal for consolidating an existing sorted tree under
+shared identity IDs. This command never moves media:
+
+```bash
+python3 picorg_sorter.py consolidation-manifest \
+  --root /mnt/elements16/@mixedpics_sorted \
+  --dest-root /mnt/elements16/@mixedpics_sorted \
+  --output /tmp/picorg-consolidation-manifest.json
+```
+
+See [linked identity consolidation](docs/IDENTITY_CONSOLIDATION.md) for
+registry field handling, collision statuses, and the deferred RD/MD migration.
 
 Inspect catalog:
 
