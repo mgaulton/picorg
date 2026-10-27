@@ -20,10 +20,12 @@ import re
 import signal
 import shutil
 import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -67,6 +69,7 @@ DEFAULT_PORT = 8787  # matches /opt/service_configurations.json (Readarr retired
 DEFAULT_OVERRIDES = Path("/opt/picorg/review_overrides.json")
 DEFAULT_REVIEW_DEST_ROOT = Path(os.environ.get("PICORG_REVIEW_DEST_ROOT", str(sorter.DEST_ROOT)))
 DEFAULT_FACE_REBUILD_LOCK = Path(os.environ.get("PICORG_FACE_REBUILD_LOCK", "/tmp/picorg-face-rebuild.lock"))
+DEFAULT_FACE_EMBEDDING_CACHE = Path(os.environ.get("FACE_CACHE", "/opt/picorg/.cache/picorg/face-embeddings-native.json"))
 DEFAULT_PIPELINE_LOCK = Path(os.environ.get("PICORG_UI_PIPELINE_LOCK", "/tmp/picorg-pipeline.lock"))
 DEFAULT_REPAIR_LEDGER = Path(os.environ.get("PICORG_REPAIR_LEDGER", "/opt/picorg/.cache/picorg/repair_ledger.jsonl"))
 DEFAULT_REBUILD_LOG = Path(os.environ.get("PICORG_FACE_RECOVERY_LOG", "/tmp/picorg-face-rebuild-recovery.log"))
@@ -233,7 +236,7 @@ def _rebuild_process_snapshot() -> dict[str, Any]:
     return {"process": {key: value for key, value in active.items() if key != "priority"}, "process_count": len(processes)}
 
 
-def _rebuild_progress_snapshot(path: Path, *, running: bool = False) -> dict[str, str]:
+def _rebuild_progress_snapshot(path: Path, *, running: bool = False) -> dict[str, Any]:
     """Return bounded rebuild progress or the latest terminal outcome.
 
     Terminal messages are reduced to safe categories so source paths from
@@ -260,6 +263,43 @@ def _rebuild_progress_snapshot(path: Path, *, running: bool = False) -> dict[str
             if "[recovery] rebuild completed successfully" in raw_line:
                 return {"message": "last rebuild completed successfully", "outcome": "success"}
     return {}
+
+
+def _face_embedding_progress_snapshot(path: Path, *, elapsed_seconds: float | None = None) -> dict[str, Any]:
+    """Read only the compact progress object at the end of the atomic cache JSON."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 4096), os.SEEK_SET)
+            tail = handle.read(4096)
+        match = re.search(rb'"progress"\s*:\s*(\{[^{}]*\})\s*\}\s*$', tail)
+        if not match:
+            return {}
+        progress = json.loads(match.group(1))
+        selected = int(progress.get("selected", 0))
+        processed = int(progress.get("processed", 0))
+        cached = int(progress.get("cached", 0))
+        if selected <= 0 or processed < 0 or processed > selected or cached < 0:
+            return {}
+        checkpoint_age = max(0.0, time.time() - path.stat().st_mtime)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+    remaining = max(0, selected - processed)
+    result: dict[str, Any] = {
+        "selected": selected,
+        "processed": processed,
+        "cached": min(cached, processed),
+        "remaining": remaining,
+        "percent": round(processed * 100.0 / selected, 1),
+        "checkpoint_age_seconds": round(checkpoint_age),
+        "stale": checkpoint_age > 180,
+    }
+    fresh_processed = max(0, processed - min(cached, processed))
+    if not result["stale"] and remaining and fresh_processed and elapsed_seconds and elapsed_seconds > 0:
+        result["eta_seconds"] = round(elapsed_seconds * remaining / fresh_processed)
+        result["eta_method"] = "rough estimate from rebuild average; storage latency varies"
+    return result
 
 
 def _scheduler_pid_alive(pid: Any) -> bool:
@@ -1374,6 +1414,8 @@ def create_app(
     identity_picker_settings_path = identity_picker_settings_path or DEFAULT_IDENTITY_PICKER_SETTINGS
     recent_choices_path = recent_choices_path or DEFAULT_RECENT_CHOICES
     recent_choices_lock = threading.Lock()
+    generic_face_profiles: Dict[str, Any] = {"key": None, "profiles": {}}
+    generic_face_profiles_lock = threading.Lock()
     identity_reconciliation_decisions_path = identity_reconciliation_decisions_path or DEFAULT_IDENTITY_RECONCILIATION_DECISIONS
     identity_reconciliation_lock = threading.Lock()
     assorted_root = assorted_root or DEFAULT_ASSORTED_ROOT
@@ -1899,6 +1941,13 @@ def create_app(
         process = process_data["process"]
         ledger = _repair_ledger_summary(repair_ledger_path, rebuild_status_cache)
         progress = _rebuild_progress_snapshot(rebuild_log_path, running=face_active)
+        if face_active:
+            face_progress = _face_embedding_progress_snapshot(
+                DEFAULT_FACE_EMBEDDING_CACHE,
+                elapsed_seconds=process.get("elapsed_seconds") if process else None,
+            )
+            if face_progress:
+                progress["face_database"] = face_progress
         return jsonify({
             "running": face_active,
             "read_only": read_only,
@@ -2213,6 +2262,66 @@ def create_app(
         # catalog_rows contains every identity registered by the sorter; all
         # registry families are valid identity targets in the review pickers.
         return jsonify(_aggregate_identity_options(result))
+
+    @app.get("/api/compare-generic-identities")
+    def compare_generic_identities():
+        raw_path = str(request.args.get("path") or "")
+        if not raw_path or len(raw_path) > 4096 or not is_known_media_path(raw_path):
+            return jsonify({"error": "image path is outside the review index"}), 403
+        image_path = Path(_lexical_path(raw_path))
+        try:
+            if image_path.is_symlink() or not image_path.is_file():
+                return jsonify({"error": "image is no longer available as a regular file"}), 404
+            if image_path.stat().st_size > 128 * 1024 * 1024:
+                return jsonify({"error": "image is larger than the on-demand comparison limit"}), 413
+            database = Path(os.environ.get("PICORG_FACE_DB", "/opt/picorg/.cache/picorg/face_database.sqlite3"))
+            stat = database.stat()
+            prefixes = tuple(_read_identity_picker_prefixes(identity_picker_settings_path))
+            picker_identities = _aggregate_identity_options(identity_rows_with_local_decisions())
+            generic_identities = tuple(sorted({
+                str(item.get("canonical") or "").strip()
+                for item in picker_identities
+                if str(item.get("canonical") or "").strip().casefold().startswith(prefixes)
+            }, key=str.casefold))
+            cache_key = (str(database), stat.st_mtime_ns, stat.st_size, prefixes, generic_identities)
+            with generic_face_profiles_lock:
+                if generic_face_profiles["key"] != cache_key:
+                    from generic_identity_compare import load_profiles
+
+                    generic_face_profiles["profiles"] = load_profiles(database, prefixes, generic_identities)
+                    generic_face_profiles["key"] = cache_key
+                profiles = generic_face_profiles["profiles"]
+            from generic_identity_compare import compare_image, load_human_mark_notes
+
+            result = compare_image(image_path, profiles)
+            mark_records = load_human_mark_notes()
+        except ImportError as exc:
+            LOGGER.warning("on-demand generic face comparison dependency unavailable: %s", exc)
+            return jsonify({"error": "face comparison is unavailable in this runtime"}), 503
+        except FileNotFoundError:
+            return jsonify({"error": "the face profile database is not available yet"}), 503
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 415
+        except (OSError, RuntimeError, TimeoutError, sqlite3.DatabaseError) as exc:
+            LOGGER.warning("on-demand generic face comparison failed for %s: %s", image_path, exc)
+            return jsonify({"error": "comparison failed while reading the image or face profiles"}), 503
+
+        for face in result.get("faces", []):
+            for candidate in face.get("candidates", []):
+                candidate["example_marks"] = {
+                    sample: [
+                        {"type": mark.get("type"), "region": mark.get("region"), "description": mark.get("description")}
+                        for mark in mark_records.get(sample, [])
+                        if mark.get("source") == "human_review"
+                    ][:5]
+                    for sample in candidate.get("examples", [])
+                }
+        result.update({
+            "review_only": True,
+            "metric": "dlib Euclidean embedding distance; lower ranks closer and is not a confidence percentage",
+            "catalog_refreshing": bool(g.face_rebuild_active),
+        })
+        return jsonify(result)
 
     @app.get("/api/identity-reconciliation")
     def identity_reconciliation():
@@ -3905,7 +4014,27 @@ let filterRefreshTimer=0;
 function queueFilterRefresh(){window.clearTimeout(filterRefreshTimer);filterRefreshTimer=window.setTimeout(()=>{if(viewMode==='clusters')refreshVisibleClusters();else if(viewMode==='identities')renderIdentityList();else if(viewMode==='attention')loadAttention()},180)}
 function formatDuration(seconds){if(!Number.isFinite(seconds))return '';let total=Math.max(0,Math.floor(seconds));let hours=Math.floor(total/3600),minutes=Math.floor((total%3600)/60),secs=total%60;return hours?`${hours}h ${minutes}m`:minutes?`${minutes}m ${secs}s`:`${secs}s`}
 function renderSystemStatus(data){let panel=document.querySelector('#systemStatus');if(!panel)return;let report=data?.report||{},attention=data?.attention||{},freshness=data?.freshness||{},audit=String(data?.audit||'').split('/').pop()||'unknown';let mode=data?.read_only?'READ-ONLY (rebuild active)':'WRITABLE REVIEW';let attentionTotal=Number(attention.total||0),pending=Number(data?.pending_assignments||0),schedulerData=data?.scheduler||{},schedulerStatus=schedulerData.running?`Job: ${schedulerData.status?.job||'running'} · ${schedulerData.status?.stage||'working'}`:schedulerData.daemon_running?'Scheduler: waiting':'Scheduler: idle',formatFreshness=value=>value?new Date(value).toLocaleString():'not recorded';panel.innerHTML=`<b>System status</b><span><i class="status-dot online"></i>Server online · ${esc(mode)}</span><span>Audit: <code>${esc(audit)}</code></span><span>${Number(data?.clusters||0).toLocaleString()} clusters · ${Number(data?.decisions||0).toLocaleString()} decisions</span><span>Last intake scan: ${esc(formatFreshness(freshness.last_intake_at))}</span><span>Maps refreshed: ${esc(formatFreshness(freshness.last_map_refresh_at))}</span><span class="${pending?'status-warn':''}">Queued assignments: ${pending.toLocaleString()}</span><span>${esc(schedulerStatus)}</span><span class="${attentionTotal?'status-warn':''}">Needs attention: ${attentionTotal.toLocaleString()}</span><small>Updated ${new Date().toLocaleTimeString()}</small>`}
-function renderRebuildStatus(data){let panel=document.querySelector('#rebuildStatus');if(!panel)return;let progressData=data?.progress||{},terminal=!data?.running&&progressData.outcome;if(!data?.running&&!terminal){panel.hidden=true;panel.textContent='';return}let ledger=data.repair_ledger||{},progress=progressData.message,parts=[data.running?'Face rebuild: RUNNING':progressData.outcome==='failed'?'Face rebuild: FAILED':'Face rebuild: COMPLETE'];if(data.running){parts.push(data.stage||'stage unknown');if(data.pid)parts.push(`PID ${data.pid}`);if(Number.isFinite(data.elapsed_seconds))parts.push(formatDuration(data.elapsed_seconds))}if(progress)parts.push(progress);if(ledger.records)parts.push(`${ledger.records.toLocaleString()} repair records`);if(ledger.latest_update){let stamp=new Date(ledger.latest_update);if(!Number.isNaN(stamp.valueOf()))parts.push(`last update ${stamp.toLocaleTimeString()}`)}panel.textContent=parts.join(' · ');panel.hidden=false}
+function renderRebuildStatus(data){
+ let panel=document.querySelector('#rebuildStatus');if(!panel)return;
+ let progressData=data?.progress||{},terminal=!data?.running&&progressData.outcome;
+ if(!data?.running&&!terminal){panel.hidden=true;panel.textContent='';return}
+ let ledger=data.repair_ledger||{},progress=progressData.message,parts=[data.running?'Face rebuild: RUNNING':progressData.outcome==='failed'?'Face rebuild: FAILED':'Face rebuild: COMPLETE'];
+ if(data.running){parts.push(data.stage||'stage unknown');if(data.pid)parts.push(`PID ${data.pid}`);if(Number.isFinite(data.elapsed_seconds))parts.push(formatDuration(data.elapsed_seconds))}
+ const face=progressData.face_database;
+ if(face&&face.stale){parts.push(`no fresh progress checkpoint; last checkpoint ${formatDuration(Number(face.checkpoint_age_seconds))} ago`)}
+ else if(face){
+  parts.push(`${Number(face.processed).toLocaleString()} / ${Number(face.selected).toLocaleString()} references (${Number(face.percent).toFixed(1)}%)`);
+  if(face.cached)parts.push(`${Number(face.cached).toLocaleString()} reused from cache`);
+  if(Number.isFinite(face.eta_seconds))parts.push(`ETA ~${formatDuration(face.eta_seconds)}`);
+  if(Number(face.checkpoint_age_seconds)>30)parts.push(`checkpoint ${formatDuration(face.checkpoint_age_seconds)} old`);
+ }
+ if(progress)parts.push(progress);
+ if(ledger.records)parts.push(`${ledger.records.toLocaleString()} repair records`);
+ if(ledger.latest_update){let stamp=new Date(ledger.latest_update);if(!Number.isNaN(stamp.valueOf()))parts.push(`last update ${stamp.toLocaleTimeString()}`)}
+ panel.textContent=parts.join(' · ');panel.hidden=false;
+ const banner=document.querySelector('#runtimeBanner');
+ if(banner&&data.running){const bannerParts=['Face rebuild in progress',data.stage||'stage unknown'];if(face&&!face.stale)bannerParts.push(`${Number(face.processed).toLocaleString()} / ${Number(face.selected).toLocaleString()} (${Number(face.percent).toFixed(1)}%)`);if(face&&face.stale)bannerParts.push('waiting for a fresh progress checkpoint');if(face&&!face.stale&&Number.isFinite(face.eta_seconds))bannerParts.push(`ETA ~${formatDuration(face.eta_seconds)}`);bannerParts.push('Assignments queue; file moves wait until completion');banner.textContent=bannerParts.join(' · ')}
+}
 async function refreshSystemStatus(){try{let responses=await Promise.all([fetch('/api/summary',{headers:{Accept:'application/json'}}),fetch('/api/scheduler/status',{headers:{Accept:'application/json'}})]);if(responses[0].ok){let summary=await responses[0].json(),schedulerResponse=responses[1].ok?await responses[1].json():{};renderSystemStatus({...summary,scheduler:schedulerResponse})}}catch(_error){}window.setTimeout(refreshSystemStatus,3000)}
 async function refreshRebuildStatus(){try{let response=await fetch('/api/rebuild-status',{headers:{Accept:'application/json'}});if(response.ok)renderRebuildStatus(await response.json())}catch(_error){}}
 async function refreshRuntimeState(){try{let response=await fetch('/api/runtime',{headers:{Accept:'application/json'}});if(response.ok)applyRuntimeState(await response.json())}catch(_error){}await refreshRebuildStatus();if(viewMode==='settings')await window.picorgRefreshSchedulerSettings?.();window.setTimeout(refreshRuntimeState,3000)}
@@ -5010,6 +5139,62 @@ HTML_PAGE = HTML_PAGE.replace(
     ".cluster-navigation{display:flex;align-items:center;gap:8px;margin:8px 0 12px}.cluster-navigation button{padding:5px 10px;font-size:12px}.cluster-navigation button[data-direction=\"1\"]{min-height:34px;font-weight:700}.cluster-navigation-label{font-size:12px;color:#aec1cd}",
     1,
 )
+GENERIC_IDENTITY_COMPARE_CSS = r"""
+.generic-identity-compare{grid-column:1/-1}.generic-compare-panel{grid-column:1/-1;display:grid;gap:7px;max-height:36vh;overflow:auto;padding:7px;border:1px solid #405563;border-radius:7px;background:#101b22}.generic-compare-note{margin:0;color:#c8d7df;font-size:12px}.generic-compare-face{display:grid;gap:6px}.generic-compare-candidate{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:5px;padding:6px;border:1px solid #405563;border-radius:6px}.generic-compare-candidate>div:first-child{min-width:0}.generic-compare-examples{display:flex;gap:5px;margin-top:5px}.generic-compare-examples figure{margin:0}.generic-compare-examples img{width:64px;height:64px;object-fit:contain;background:#091117;border-radius:4px}.generic-compare-marks{font-size:11px;color:#d2c79d;max-width:120px}.generic-compare-candidate button{white-space:normal}
+@media(max-width:700px){.generic-compare-panel{max-height:30vh}.generic-compare-candidate{grid-template-columns:minmax(0,1fr)}.generic-compare-candidate button{width:100%}}
+"""
+HTML_PAGE = HTML_PAGE.replace('</style>', GENERIC_IDENTITY_COMPARE_CSS + '</style>', 1)
+
+GENERIC_IDENTITY_COMPARE_SCRIPT = r"""
+(()=>{
+  const previousRender=window.renderMediaModal;
+  if(typeof previousRender!=='function')return;
+  function useCandidate(candidate){
+    const picker=document.querySelector('#modalIdentity'),search=document.querySelector('#modalIdentitySearch'),family=document.querySelector('#modalFamily'),newName=document.querySelector('#modalNewIdentity');
+    if(!picker)return;
+    const optionData=(identityOptions||[]).find(item=>String(item.canonical||'').toLocaleLowerCase()===candidate.identity.toLocaleLowerCase());
+    if(search){search.value=candidate.identity;search.dispatchEvent(new Event('input',{bubbles:true}))}
+    if(!Array.from(picker.options).some(option=>option.value===candidate.identity))picker.add(new Option(candidate.identity,candidate.identity));
+    picker.value=candidate.identity;
+    if(optionData&&family&&Array.from(family.options).some(option=>option.value===optionData.family))family.value=optionData.family;
+    if(newName)newName.value='';
+    picker.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  function makeCandidateCard(candidate){
+    const card=document.createElement('article');card.className='generic-compare-candidate';
+    const info=document.createElement('div'),title=document.createElement('strong');title.textContent=candidate.identity;info.append(title);
+    const score=document.createElement('div');score.className='muted';score.textContent=`Top reference mean ${candidate.distance} (closest ${candidate.nearest_distance}) · ${candidate.reference_count} profile image(s)`;info.append(score);
+    const samples=document.createElement('div');samples.className='generic-compare-examples';
+    for(const path of candidate.examples||[]){const figure=document.createElement('figure'),image=document.createElement('img');image.src='/media?path='+encodeURIComponent(path);image.alt=`Example reference for ${candidate.identity}`;image.loading='lazy';figure.append(image);for(const mark of (candidate.example_marks||{})[path]||[]){const note=document.createElement('figcaption');note.className='generic-compare-marks';note.textContent=`Human note: ${mark.type||'mark'}${mark.region?' · '+mark.region:''} — ${mark.description||''}`;figure.append(note)}samples.append(figure)}
+    info.append(samples);
+    const choose=document.createElement('button');choose.type='button';choose.textContent='Use identity';choose.title='Select this identity in the assigner; no assignment or move will happen yet';choose.addEventListener('click',()=>useCandidate(candidate));
+    card.append(info,choose);return card;
+  }
+  window.renderMediaModal=function(...args){
+    const result=previousRender.apply(this,args),tools=document.querySelector('#mediaModalContent .modal-identity-tools');
+    if(!tools||tools.querySelector('.generic-identity-compare'))return result;
+    const button=document.createElement('button');button.type='button';button.className='generic-identity-compare';button.textContent='Compare generic identities';button.disabled=/\.(mp4|mov|webm|m4v)$/i.test(modalPaths[modalIndex]||'');button.title=button.disabled?'Face comparison is available for still images only':'Rank this image against saved generic face profiles. Results are review suggestions only.';
+    const panel=document.createElement('section');panel.className='generic-compare-panel';panel.hidden=true;panel.setAttribute('aria-live','polite');
+    button.addEventListener('click',async()=>{
+      const path=modalPaths[modalIndex];if(!path)return;
+      button.disabled=true;button.textContent='Comparing…';panel.hidden=false;panel.replaceChildren();
+      const message=document.createElement('p');message.className='generic-compare-note';message.textContent='Comparing face embeddings only. Distances rank candidates; they are not confidence percentages. Tattoos and visible-mark notes are not machine-scored.';panel.append(message);
+      try{
+        const response=await fetch('/api/compare-generic-identities?path='+encodeURIComponent(path),{headers:{Accept:'application/json'}}),data=await response.json();if(!response.ok)throw new Error(data.error||`Request failed (${response.status})`);
+        if(data.catalog_refreshing){const warning=document.createElement('p');warning.className='generic-compare-note';warning.textContent='The face catalog is being refreshed; these results use the last published catalog.';panel.append(warning)}
+        if(!data.profile_count){const empty=document.createElement('p');empty.textContent='No face profiles match the current generic picker prefixes.';panel.append(empty)}
+        else if(!data.face_count){const empty=document.createElement('p');empty.textContent='No recognizable face was detected in this image.';panel.append(empty)}
+        else{
+          if(data.face_count>1){const warning=document.createElement('p');warning.className='generic-compare-note';warning.textContent=`${data.face_count} faces detected. Suggestions are listed per face; review before assigning the whole image.`;panel.append(warning)}
+          for(const face of data.faces||[]){const group=document.createElement('div');group.className='generic-compare-face';const heading=document.createElement('strong');heading.textContent=`Face ${Number(face.face_index)+1}`;group.append(heading);if(!face.candidates?.length){const empty=document.createElement('span');empty.textContent='No matching profiles';group.append(empty)}for(const candidate of face.candidates||[])group.append(makeCandidateCard(candidate));panel.append(group)}
+        }
+      }catch(error){const failure=document.createElement('p');failure.setAttribute('role','alert');failure.textContent=error.message;panel.append(failure)}finally{button.disabled=false;button.textContent='Compare again'}
+    });
+    tools.append(button,panel);return result;
+  };
+})();
+"""
+
 CLUSTER_NAVIGATION_SCRIPT = r"""
 function visibleClusterIds(){
   return [...document.querySelectorAll('#list .cluster')]
@@ -5146,7 +5331,7 @@ IDENTITY_HOVER_PREVIEW_SCRIPT = r"""
   window.addEventListener('scroll',hide,true);window.addEventListener('resize',hide);new MutationObserver(decorate).observe(document.body,{childList:true,subtree:true});decorate();
 })();
 """
-HTML_PAGE = HTML_PAGE.replace("</script>", CLUSTER_NAVIGATION_SCRIPT + "\n" + UNDO_LAST_ACTION_SCRIPT + "\n" + IDENTITY_HOVER_PREVIEW_SCRIPT + "\n" + IDENTITY_PREVIEW_SCRIPT + "init();</script>", 1)
+HTML_PAGE = HTML_PAGE.replace("</script>", CLUSTER_NAVIGATION_SCRIPT + "\n" + UNDO_LAST_ACTION_SCRIPT + "\n" + GENERIC_IDENTITY_COMPARE_SCRIPT + "\n" + IDENTITY_HOVER_PREVIEW_SCRIPT + "\n" + IDENTITY_PREVIEW_SCRIPT + "init();</script>", 1)
 HTML_PAGE = HTML_PAGE.replace("</style>", MODAL_COMPACT_CONTROLS_CSS + "</style>", 1)
 if "</style>" not in HTML_PAGE:
     HTML_PAGE = HTML_PAGE.replace("</head>", "</style></head>", 1)
