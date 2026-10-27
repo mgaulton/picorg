@@ -20,7 +20,7 @@ from typing import Any
 
 import picorg_sorter as sorter
 from picorg_health import health_report
-from identity_evidence_store import list_assignment_queue, update_assignment_status
+from identity_evidence_store import claim_assignment_for_reconcile, list_assignment_queue, update_assignment_status
 from review_ui import (
     DEFAULT_FACE_MARKERS,
     DEFAULT_DECISIONS,
@@ -76,7 +76,7 @@ def _confirmed_rows(
     if evidence_db_path is not None:
         # Errors/conflicts are retained for inspection and explicit retry; do
         # not move them again on every scheduler cycle.
-        for item in list_assignment_queue(evidence_db_path, statuses=("pending", "retry")):
+        for item in list_assignment_queue(evidence_db_path, statuses=("pending", "retry", "applying")):
             if item.get("path") and item.get("identity"):
                 by_path[_image_decision_key(str(item["path"]))] = {
                     **item,
@@ -191,6 +191,11 @@ def reconcile(
         if key in seen:
             continue
         seen.add(key)
+        if apply and row.get("queued") and row.get("assignment_id"):
+            assignment_id = int(row["assignment_id"])
+            if evidence_db_path is None or not claim_assignment_for_reconcile(evidence_db_path, assignment_id):
+                errors.append({"path": raw_path, "error": "queued assignment is no longer pending; skipped"})
+                continue
         source = Path(raw_path)
         if not source.is_file():
             missing += 1

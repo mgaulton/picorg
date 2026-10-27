@@ -9,7 +9,7 @@ import pytest
 
 import reconcile_confirmed
 import review_ui
-from identity_evidence_store import list_assignment_queue, queue_assignment
+from identity_evidence_store import claim_assignment_for_reconcile, list_assignment_queue, queue_assignment
 
 
 @pytest.fixture(autouse=True)
@@ -708,18 +708,90 @@ def test_face_rebuild_queues_assignments_without_applying_them(tmp_path):
         )
         client = app.test_client()
         client.environ_base["REMOTE_ADDR"] = "192.168.2.5"
-        image_path = str(tmp_path / "A (1).jpg")
+        image_paths = [str(tmp_path / "A (1).jpg"), str(tmp_path / "A (2).jpg")]
         queued = client.post("/api/image-decisions/pending", json={
-            "paths": [image_path], "identity": "creator", "family": "manual", "status": "confirmed",
+            "paths": image_paths, "identity": "creator", "family": "manual", "status": "confirmed",
         })
         assert queued.status_code == 202
         assert queued.get_json()["applied"] is False
-        assert json.loads(pending_path.read_text())["assignments"][review_ui._image_decision_key(image_path)]["identity"] == "creator"
+        pending_records = json.loads(pending_path.read_text())["assignments"]
+        assert len(pending_records) == 2
+        assert all(record["identity"] == "creator" for record in pending_records.values())
         assert not image_decisions_path.exists()
-        blocked = client.post("/api/image-decisions", json={"paths": [image_path], "identity": "creator", "family": "manual", "status": "confirmed"})
+        blocked = client.post("/api/image-decisions", json={"paths": image_paths, "identity": "creator", "family": "manual", "status": "confirmed"})
         assert blocked.status_code == 423
         status = client.get("/api/pending-assignments").get_json()
-        assert status["count"] == 1
+        assert status["count"] == 2
+        latest = client.get("/api/undo/latest").get_json()
+        assert latest["action"]["kind"] == "queued_assignment"
+        assert latest["action"]["count"] == 2
+
+        undone = client.post("/api/undo/latest")
+
+        assert undone.status_code == 200
+        assert undone.get_json()["undone"] is True
+        assert set(undone.get_json()["restored_paths"]) == set(image_paths)
+        assert all(Path(path).is_file() for path in image_paths)
+        undone_queue = client.get("/api/assignment-queue?status=undone").get_json()["assignments"]
+        assert len(undone_queue) == 2
+        assert all(item["provenance"].get("undone_at") for item in undone_queue)
+        assert client.get("/api/pending-assignments").get_json()["count"] == 0
+        assert json.loads(pending_path.read_text())["assignments"] == {}
+
+        requeued = client.post("/api/image-decisions/pending", json={
+            "paths": [image_paths[0]], "identity": "creator", "family": "manual", "status": "confirmed",
+        })
+        assert requeued.status_code == 202
+        queued_id = client.get("/api/assignment-queue?status=pending").get_json()["assignments"][0]["assignment_id"]
+        rejected = client.post(f"/api/assignment-queue/{queued_id}/reject")
+        assert rejected.status_code == 200
+        assert client.get("/api/pending-assignments").get_json()["count"] == 0
+        assert json.loads(pending_path.read_text())["assignments"] == {}
+
+        applying = client.post("/api/image-decisions/pending", json={
+            "paths": [image_paths[1]], "identity": "creator", "family": "manual", "status": "confirmed",
+        })
+        assert applying.status_code == 202
+        applying_id = client.get("/api/assignment-queue?status=pending").get_json()["assignments"][0]["assignment_id"]
+        assert claim_assignment_for_reconcile(tmp_path / "evidence.sqlite3", applying_id)
+        in_progress = client.post("/api/undo/latest")
+        assert in_progress.status_code == 409
+        assert "currently being applied" in in_progress.get_json()["error"]
+        assert client.get("/api/assignment-queue?status=applying").get_json()["count"] == 1
+        assert client.get("/api/pending-assignments").get_json()["count"] == 1
+
+
+def test_applied_move_undo_stays_blocked_while_rebuild_disables_writes(tmp_path, monkeypatch):
+    audit = audit_payload(tmp_path)
+    source = tmp_path / "A (1).jpg"
+    source.write_bytes(b"already assigned")
+    destination_root = tmp_path / "sorted"
+    monkeypatch.setattr(review_ui, "DEFAULT_REVIEW_DEST_ROOT", destination_root)
+    lock_path = tmp_path / "face-rebuild.lock"
+    client = writable_app(
+        audit,
+        tmp_path / "decisions.json",
+        image_decisions_path=tmp_path / "image-decisions.json",
+        face_markers_path=tmp_path / "markers.json",
+        move_history_path=tmp_path / "move-history.json",
+        face_rebuild_lock_path=lock_path,
+    ).test_client()
+    result = client.post("/api/image-decisions", json={
+        "paths": [str(source)], "identity": "creator", "family": "manual", "status": "confirmed",
+    })
+    assert result.status_code == 201
+    destination = Path(result.get_json()["moved"][0]["destination"])
+    assert destination.is_file()
+    assert not source.exists()
+
+    with lock_path.open("w+") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        blocked = client.post("/api/undo/latest")
+
+    assert blocked.status_code == 423
+    assert "undo is deferred" in blocked.get_json()["error"]
+    assert destination.is_file()
+    assert not source.exists()
 
 
 def test_pending_assignments_are_safe_and_durable_without_active_rebuild(tmp_path):

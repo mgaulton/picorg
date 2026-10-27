@@ -41,6 +41,8 @@ from run_artifact_store import resolve_current as resolve_current_run
 from identity_evidence_store import (
     list_assignment_queue as list_durable_assignment_queue,
     queue_assignment as queue_durable_assignment,
+    reject_pending_assignments as reject_pending_durable_assignments,
+    undo_pending_assignments as undo_pending_durable_assignments,
     update_assignment_status as update_durable_assignment_status,
 )
 
@@ -1492,6 +1494,34 @@ def create_app(
         pending_assignments.clear()
         pending_assignments.update(_read_pending_assignments(pending_assignments_path))
 
+    def remove_pending_assignment_records(assignment_ids: Iterable[int]) -> list[dict[str, Any]]:
+        removed_ids = {int(value) for value in assignment_ids}
+        removed: list[dict[str, Any]] = []
+
+        def remove_records(records: Dict[str, Dict[str, Any]]) -> None:
+            for key, record in list(records.items()):
+                try:
+                    assignment_id = int(record.get("assignment_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if assignment_id in removed_ids:
+                    removed.append(records.pop(key))
+
+        latest_pending = _update_pending_assignments(pending_assignments_path, remove_records)
+        pending_assignments.clear()
+        pending_assignments.update(latest_pending)
+        return removed
+
+    def restore_pending_assignment_records(records: Iterable[Dict[str, Any]]) -> None:
+        saved = {str(record.get("key")): record for record in records if record.get("key")}
+        if not saved:
+            return
+        latest_pending = _update_pending_assignments(
+            pending_assignments_path, lambda current: current.update(saved)
+        )
+        pending_assignments.clear()
+        pending_assignments.update(latest_pending)
+
     def refresh_applied_assignments() -> None:
         try:
             applied = list_durable_assignment_queue(evidence_db_path, statuses=("applied",))
@@ -1794,7 +1824,15 @@ def create_app(
         # active decision ledger, so it remains available during a rebuild.
         pending_assignment_write = request.path == "/api/image-decisions/pending" and request.method == "POST"
         assorted_association_write = request.path == "/api/assorted-folder-associations" and request.method == "POST"
-        if g.read_only and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not (pending_assignment_write or assorted_association_write):
+        queued_assignment_cancel = (
+            request.path.startswith("/api/assignment-queue/")
+            and request.path.endswith("/reject")
+            and request.method == "POST"
+        )
+        latest_undo_request = request.path == "/api/undo/latest" and request.method == "POST"
+        if g.read_only and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not (
+            pending_assignment_write or assorted_association_write or queued_assignment_cancel or latest_undo_request
+        ):
             return jsonify({
                 "error": "review writes are disabled while a pipeline job is running",
                 "read_only": True,
@@ -1918,10 +1956,25 @@ def create_app(
     @app.post("/api/assignment-queue/<int:assignment_id>/reject")
     def reject_assignment_queue_item(assignment_id: int):
         """Reject one queued assignment without touching its source file."""
-        try:
-            update_durable_assignment_status(evidence_db_path, assignment_id, "rejected", "rejected from review UI")
-        except (OSError, RuntimeError, ValueError) as exc:
-            return jsonify({"error": f"unable to reject assignment: {exc}"}), 400
+        with write_lock:
+            removed: list[dict[str, Any]] = []
+            try:
+                removed = remove_pending_assignment_records([assignment_id])
+                rejected = reject_pending_durable_assignments(
+                    evidence_db_path, [assignment_id], "rejected from review UI"
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                restore_pending_assignment_records(removed)
+                return jsonify({"error": f"unable to reject assignment: {exc}"}), 409
+            if not rejected:
+                restore_pending_assignment_records(removed)
+                return jsonify({"error": "assignment is no longer pending"}), 409
+            _append_review_ledger(ledger_path, {
+                "event": "queued_assignment_rejected",
+                "assignment_ids": [assignment_id],
+                "paths": [str(item.get("path") or "") for item in removed],
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            })
         return jsonify({"assignment_id": assignment_id, "status": "rejected"}), 200
 
     @app.get("/api/runtime")
@@ -3412,6 +3465,28 @@ def create_app(
                 "saved_at": str(operation.get("saved_at") or ""),
                 "count": len(moves) or 1,
             })
+        pending_batches: Dict[str, Dict[str, Any]] = {}
+        for assignment in list_durable_assignment_queue(evidence_db_path, statuses=("pending", "applying")):
+            assignment_id = int(assignment.get("assignment_id") or 0)
+            provenance = assignment.get("provenance")
+            provenance = provenance if isinstance(provenance, dict) else {}
+            request_id = str(provenance.get("request_id") or f"assignment-{assignment_id}")
+            batch = pending_batches.setdefault(request_id, {
+                "kind": "applying_assignment" if assignment.get("status") == "applying" else "queued_assignment",
+                "id": request_id,
+                "identity": str(assignment.get("identity") or ""),
+                "saved_at": str(assignment.get("created_at") or ""),
+                "count": 0,
+                "assignment_ids": [],
+                "paths": [],
+            })
+            batch["assignment_ids"].append(assignment_id)
+            batch["paths"].append(str(assignment.get("path") or ""))
+            batch["count"] += 1
+            if assignment.get("status") == "applying":
+                batch["kind"] = "applying_assignment"
+            batch["saved_at"] = max(batch["saved_at"], str(assignment.get("created_at") or ""))
+        candidates.extend(pending_batches.values())
         candidates.extend(
             {
                 "kind": "group",
@@ -3435,11 +3510,52 @@ def create_app(
         action = latest_undo_action()
         if action is None:
             return jsonify({"error": "no reversible assignment or group action"}), 404
+        if action["kind"] == "applying_assignment":
+            return jsonify({
+                "error": "This queued assignment is currently being applied; wait for the pipeline step to finish before undoing it.",
+                "read_only": g.read_only,
+            }), 409
+        if g.read_only and action["kind"] not in {"queued_assignment", "group"}:
+            return jsonify({
+                "error": "This action requires changing files; its undo is deferred until pipeline writes are re-enabled.",
+                "read_only": True,
+            }), 423
         if action["kind"] == "move":
             response = undo_move_operation(action["id"])
             if response.status_code >= 400:
                 return response
             return jsonify({**(response.get_json() or {}), "kind": "move", "identity": action["identity"]}), response.status_code
+
+        if action["kind"] == "queued_assignment":
+            assignment_ids = [int(value) for value in action.get("assignment_ids", [])]
+            with write_lock:
+                removed: list[dict[str, Any]] = []
+                try:
+                    removed = remove_pending_assignment_records(assignment_ids)
+                    undone = undo_pending_durable_assignments(
+                        evidence_db_path, assignment_ids, "undone from review UI"
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    restore_pending_assignment_records(removed)
+                    return jsonify({"error": f"unable to undo queued assignment: {exc}"}), 409
+                if not undone:
+                    restore_pending_assignment_records(removed)
+                    return jsonify({"error": "queued assignment is no longer pending"}), 409
+                now = datetime.now(timezone.utc).isoformat()
+                _append_review_ledger(ledger_path, {
+                    "event": "queued_assignment_undo",
+                    "assignment_ids": assignment_ids,
+                    "paths": [str(item.get("path") or "") for item in removed] or action.get("paths", []),
+                    "identity": action.get("identity"),
+                    "saved_at": now,
+                })
+            return jsonify({
+                "kind": "queued_assignment",
+                "assignment_ids": assignment_ids,
+                "identity": action["identity"],
+                "restored_paths": action.get("paths", []),
+                "undone": True,
+            })
 
         now = datetime.now(timezone.utc).isoformat()
         action_id = action["id"]

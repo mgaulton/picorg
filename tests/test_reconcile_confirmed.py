@@ -42,7 +42,12 @@ def test_reconcile_confirmed_empty_run_is_idempotent(tmp_path):
     markers = tmp_path / "markers.json"
     image_decisions.write_text(json.dumps({"decisions": []}), encoding="utf-8")
     decisions.write_text(json.dumps({"decisions": []}), encoding="utf-8")
-    result = reconcile(image_decisions_path=image_decisions, decisions_path=decisions, markers_path=markers)
+    result = reconcile(
+        image_decisions_path=image_decisions,
+        decisions_path=decisions,
+        markers_path=markers,
+        pending_assignments_path=tmp_path / "pending.json",
+    )
     assert result["confirmed_records"] == 0
     assert result["moved"] == 0
     assert json.loads(markers.read_text(encoding="utf-8"))["markers"] == []

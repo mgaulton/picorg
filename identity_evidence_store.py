@@ -601,6 +601,67 @@ def update_assignment_status(
         )
 
 
+def reject_pending_assignments(db: Path, assignment_ids: Iterable[int], reason: str) -> bool:
+    """Atomically reject a batch only while every queued item is still pending."""
+    ids = list(dict.fromkeys(int(value) for value in assignment_ids))
+    if not ids:
+        return False
+    placeholders = ",".join("?" for _ in ids)
+    with open_store(db) as connection:
+        cursor = connection.execute(
+            f"UPDATE assignment_queue SET status='rejected', applied_at=NULL, error=? "
+            f"WHERE status='pending' AND assignment_id IN ({placeholders})",
+            [str(reason)[:500], *ids],
+        )
+        if cursor.rowcount != len(ids):
+            raise RuntimeError("assignment batch is no longer fully pending")
+    return True
+
+
+def undo_pending_assignments(db: Path, assignment_ids: Iterable[int], reason: str) -> bool:
+    """Undo a pending batch atomically and retain explicit undo provenance."""
+    ids = list(dict.fromkeys(int(value) for value in assignment_ids))
+    if not ids:
+        return False
+    placeholders = ",".join("?" for _ in ids)
+    now = utc_now()
+    with open_store(db) as connection:
+        rows = connection.execute(
+            f"SELECT assignment_id, provenance_json FROM assignment_queue "
+            f"WHERE status='pending' AND assignment_id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        if len(rows) != len(ids):
+            raise RuntimeError("assignment batch is no longer fully pending")
+        for assignment_id, provenance_json in rows:
+            try:
+                provenance = json.loads(provenance_json or "{}")
+            except json.JSONDecodeError:
+                provenance = {}
+            if not isinstance(provenance, dict):
+                provenance = {}
+            provenance["undone_at"] = now
+            cursor = connection.execute(
+                "UPDATE assignment_queue SET status='undone', applied_at=NULL, error=?, provenance_json=? "
+                "WHERE assignment_id=? AND status='pending'",
+                (str(reason)[:500], _json(provenance), int(assignment_id)),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("assignment batch changed while it was being undone")
+    return True
+
+
+def claim_assignment_for_reconcile(db: Path, assignment_id: int) -> bool:
+    """Mark a queued move in progress so an undo cannot race its file operation."""
+    with open_store(db) as connection:
+        cursor = connection.execute(
+            "UPDATE assignment_queue SET status='applying', error=NULL "
+            "WHERE assignment_id=? AND status IN ('pending', 'retry', 'applying')",
+            (int(assignment_id),),
+        )
+        return cursor.rowcount == 1
+
+
 def record_pipeline_run(
     db: Path,
     *,

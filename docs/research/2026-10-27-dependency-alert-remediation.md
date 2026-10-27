@@ -15,21 +15,27 @@ After these updates, `pip-audit` reported no findings for those four packages.
 The lock export retains its distribution hashes and passes
 `verify_dependency_lock.sh`.
 
-## Remaining setuptools blocker
+## Remaining setuptools alerts
 
-Four Dependabot alerts remain (two setuptools advisories in each lock
-manifest). `setuptools` stays at 80.10.2 because the supported face extra and
+Five Dependabot alerts remain: one medium alert on `requirements-face.txt`,
+plus two advisories each on `uv.lock` and `requirements-locked.txt`. `pip-audit`
+reports three records for the two setuptools advisories.
+
+`setuptools` stays at 80.10.2 because the supported face extra and
 `requirements-face.txt` require `<81`; the README documents that
-`face_recognition_models` imports the legacy `pkg_resources` API. The patched
-setuptools releases reported by the advisories are 83.0.0 and 84.1.0, which
-cannot satisfy that compatibility constraint. `pip-audit` currently reports
-three records for those two advisories.
+`face_recognition_models` imports the legacy `pkg_resources` API. Setuptools
+removed that API in 82.0.0, so the patched versions 83.0.0 and 84.1.0 cannot
+satisfy the current face backend. The remaining advisories are platform and
+workflow specific: the medium alert concerns source distribution exclusions
+on macOS APFS/HFS+ with Unicode-normalized filenames; the low alert concerns
+legacy wheel installation on Windows. PicOrg's deployed service runs on Linux
+and does not publish source distributions, but those alerts still matter to
+developers using the affected build/install workflows.
 
-To unblock the upgrade, replace or update the face model resource-loading
-dependency so the face extra no longer needs `pkg_resources`, then verify the
-face model loader and face matching pipeline before removing the setuptools
-cap. Until then, retain the working face pipeline and track these alerts as an
-explicit compatibility exception.
+To remove the alerts without regressing face matching, replace or update the
+face model resource-loading dependency so the face extra no longer needs
+`pkg_resources`, then verify the face model loader and face matching pipeline
+before removing the setuptools cap.
 
 ## Verification
 
@@ -44,6 +50,11 @@ explicit compatibility exception.
   review UI and identity-group assertions. The same three tests fail at the
   unchanged baseline commit `70fb8ab` with the same Werkzeug version, so these
   failures predate the dependency patch and were left unchanged.
+
+Advisories: [CVE-2026-59890 / GHSA-h35f-9h28-mq5c](https://github.com/advisories/GHSA-h35f-9h28-mq5c),
+[GHSA-xmj3-9gf7-h52w](https://github.com/advisories/GHSA-xmj3-9gf7-h52w).
+The setuptools documentation records `pkg_resources` removal in 82.0.0:
+[migration guidance](https://github.com/pypa/setuptools/blob/main/docs/deprecated/pkg_resources.rst).
 
 The active service virtual environment was not modified. The lockfile updates
 take effect in deployments after their normal dependency installation and
